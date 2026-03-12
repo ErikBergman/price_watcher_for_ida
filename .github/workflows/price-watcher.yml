@@ -75,11 +75,7 @@ jobs:
             PARSED_PRICE_VALUE="<not found>"
           fi
 
-          message="Price watcher run: $JOB_STATUS
-Repo: ${{ github.repository }}
-$PARSED_PRICE_FIELD
-Value: $PARSED_PRICE_VALUE
-Run: $RUN_URL"
+          message=$'Price watcher run: '"$JOB_STATUS"$'\nRepo: ${{ github.repository }}'$'\n'"$PARSED_PRICE_FIELD"$'\nValue: '"$PARSED_PRICE_VALUE"$'\nRun: '"$RUN_URL"
 
           curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
