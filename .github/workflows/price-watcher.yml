@@ -51,3 +51,36 @@ jobs:
         run: |
           echo "Found field: ${{ steps.extract.outputs.parsed_price_field }}"
           echo "Parsed value: ${{ steps.extract.outputs.parsed_price_value }}"
+
+      - name: Notify Telegram
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PARSED_PRICE_FIELD: ${{ steps.extract.outputs.parsed_price_field }}
+          PARSED_PRICE_VALUE: ${{ steps.extract.outputs.parsed_price_value }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          if [[ -z "$TELEGRAM_BOT_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]]; then
+            echo "Skipping Telegram notification: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing."
+            exit 0
+          fi
+
+          if [[ -z "$PARSED_PRICE_FIELD" ]]; then
+            PARSED_PRICE_FIELD="parsed_price: <not found>"
+          fi
+          if [[ -z "$PARSED_PRICE_VALUE" ]]; then
+            PARSED_PRICE_VALUE="<not found>"
+          fi
+
+          message="Price watcher run: $JOB_STATUS
+Repo: ${{ github.repository }}
+$PARSED_PRICE_FIELD
+Value: $PARSED_PRICE_VALUE
+Run: $RUN_URL"
+
+          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${message}" > /dev/null
