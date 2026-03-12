@@ -3,7 +3,7 @@ name: Price Watcher
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 7 * * *"
+    - cron: "33 20 * * *"
 
 jobs:
   watch-price:
