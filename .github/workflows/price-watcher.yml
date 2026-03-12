@@ -1,0 +1,53 @@
+name: Price Watcher
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * *"
+
+jobs:
+  watch-price:
+    runs-on: ubuntu-latest
+    outputs:
+      parsed_price_field: ${{ steps.extract.outputs.parsed_price_field }}
+      parsed_price_value: ${{ steps.extract.outputs.parsed_price_value }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run price watcher
+        run: python watch_price.py | tee run.log
+
+      - name: Extract parsed price
+        id: extract
+        shell: bash
+        run: |
+          field_line="$(grep -m1 -E 'parsed_price:\s*[^ ]' run.log | sed 's/^[[:space:]]*//')"
+          if [[ -z "$field_line" ]]; then
+            echo "No parsed_price field found in output."
+            exit 1
+          fi
+
+          parsed_value="$(echo "$field_line" | cut -d':' -f2- | xargs)"
+          echo "parsed_price_field=$field_line" >> "$GITHUB_OUTPUT"
+          echo "parsed_price_value=$parsed_value" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Price Watcher Result"
+            echo ""
+            echo "- Field: \`$field_line\`"
+            echo "- Parsed value: \`$parsed_value\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Print extracted field
+        run: |
+          echo "Found field: ${{ steps.extract.outputs.parsed_price_field }}"
+          echo "Parsed value: ${{ steps.extract.outputs.parsed_price_value }}"
