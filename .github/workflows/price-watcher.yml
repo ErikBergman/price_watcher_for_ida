@@ -15,6 +15,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install rclone
+        shell: bash
+        run: |
+          sudo -v
+          curl https://rclone.org/install.sh | sudo bash
+
+      - name: Download runtime data from Koofr
+        env:
+          KOOFR_EMAIL: ${{ secrets.KOOFR_EMAIL }}
+          KOOFR_APP_PASSWORD: ${{ secrets.KOOFR_APP_PASSWORD }}
+          KOOFR_PATH: ${{ secrets.KOOFR_PATH }}
+        shell: bash
+        run: |
+          if [[ -z "$KOOFR_EMAIL" || -z "$KOOFR_APP_PASSWORD" || -z "$KOOFR_PATH" ]]; then
+            echo "Missing Koofr secrets. Expected KOOFR_EMAIL, KOOFR_APP_PASSWORD, and KOOFR_PATH."
+            exit 1
+          fi
+
+          mkdir -p ~/.config/rclone runtime_data
+          obscured_password="$(rclone obscure "$KOOFR_APP_PASSWORD")"
+          printf '[koofr]\ntype = koofr\nprovider = koofr\nuser = %s\npassword = %s\n' \
+            "$KOOFR_EMAIL" "$obscured_password" > ~/.config/rclone/rclone.conf
+
+          rclone copyto "koofr:${KOOFR_PATH}/links.csv" runtime_data/links.csv
+          if ! rclone copyto "koofr:${KOOFR_PATH}/price_memory.json" runtime_data/price_memory.json; then
+            printf '{}\n' > runtime_data/price_memory.json
+          fi
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -24,7 +52,28 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run price watcher
+        env:
+          LINKS_CSV_PATH: runtime_data/links.csv
+          PRICE_STATE_PATH: runtime_data/price_memory.json
         run: python watch_price.py | tee run.log
+
+      - name: Upload price memory to Koofr
+        if: always()
+        env:
+          KOOFR_PATH: ${{ secrets.KOOFR_PATH }}
+        shell: bash
+        run: |
+          if [[ -z "$KOOFR_PATH" ]]; then
+            echo "Skipping Koofr upload: KOOFR_PATH is missing."
+            exit 0
+          fi
+
+          if [[ ! -f runtime_data/price_memory.json ]]; then
+            echo "Skipping Koofr upload: runtime_data/price_memory.json not found."
+            exit 0
+          fi
+
+          rclone copyto runtime_data/price_memory.json "koofr:${KOOFR_PATH}/price_memory.json"
 
       - name: Extract parsed price
         id: extract
@@ -37,14 +86,27 @@ jobs:
           fi
 
           parsed_value="$(echo "$field_line" | cut -d':' -f2- | xargs)"
+          notification_text="$(grep '^\[item_message\] ' run.log | sed 's/^\[item_message\] //')"
+          if [[ -z "$notification_text" ]]; then
+            notification_text="$field_line"
+          fi
+
           echo "parsed_price_field=$field_line" >> "$GITHUB_OUTPUT"
           echo "parsed_price_value=$parsed_value" >> "$GITHUB_OUTPUT"
+          {
+            echo "notification_text<<EOF"
+            printf '%s\n' "$notification_text"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
           {
             echo "## Price Watcher Result"
             echo ""
             echo "- Field: \`$field_line\`"
             echo "- Parsed value: \`$parsed_value\`"
+            echo ""
+            echo "### Item Messages"
+            printf '%s\n' "$notification_text"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Print extracted field
@@ -57,8 +119,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          PARSED_PRICE_FIELD: ${{ steps.extract.outputs.parsed_price_field }}
-          PARSED_PRICE_VALUE: ${{ steps.extract.outputs.parsed_price_value }}
+          NOTIFICATION_TEXT: ${{ steps.extract.outputs.notification_text }}
           JOB_STATUS: ${{ job.status }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         shell: bash
@@ -68,14 +129,11 @@ jobs:
             exit 0
           fi
 
-          if [[ -z "$PARSED_PRICE_FIELD" ]]; then
-            PARSED_PRICE_FIELD="parsed_price: <not found>"
-          fi
-          if [[ -z "$PARSED_PRICE_VALUE" ]]; then
-            PARSED_PRICE_VALUE="<not found>"
+          if [[ -z "$NOTIFICATION_TEXT" ]]; then
+            NOTIFICATION_TEXT="No item message generated."
           fi
 
-          message=$'Price watcher run: '"$JOB_STATUS"$'\nRepo: ${{ github.repository }}'$'\n'"$PARSED_PRICE_FIELD"$'\nValue: '"$PARSED_PRICE_VALUE"$'\nRun: '"$RUN_URL"
+          message=$'Price watcher run: '"$JOB_STATUS"$'\nRepo: ${{ github.repository }}'$'\n\n'"$NOTIFICATION_TEXT"$'\n\nRun: '"$RUN_URL"
 
           curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
