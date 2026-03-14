@@ -44,6 +44,7 @@ For local testing you also need:
 ## Repository Files
 
 - [watch_price.py](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/watch_price.py): the scraper and price-memory logic
+- [discover_selectors.py](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/discover_selectors.py): interactive helper for adding new site selectors
 - [price-watcher.yml](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/.github/workflows/price-watcher.yml): the GitHub Actions workflow
 - [requirements.txt](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/requirements.txt): Python dependencies
 - [example.links.csv](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/data/example.links.csv): example input file
@@ -127,6 +128,9 @@ Schema notes:
 - each selector must have:
   - `type`: `css` or `xpath`
   - `value`: the selector string
+- optional:
+  - `attr`: read an attribute instead of element text
+  - `currency`: append a currency hint such as `kr` when the raw value is numeric only
 - optional: `url_contains`
   - use this if one domain needs different selector sets for different URL patterns
 
@@ -321,6 +325,29 @@ Example:
 ```bash
 LINKS_CSV_PATH=runtime_data/links.csv SELECTOR_SCHEMA_PATH=runtime_data/site_selectors.json PRICE_STATE_PATH=runtime_data/price_memory.json python watch_price.py
 ```
+
+## Adding a New Site
+
+Use the helper script to discover selectors interactively:
+
+```bash
+python discover_selectors.py "https://example.com/product-page"
+```
+
+If you leave out the URL, the script prompts for it:
+
+```bash
+python discover_selectors.py
+```
+
+The helper:
+
+1. fetches the page
+2. shows up to three likely price candidates
+3. asks whether a candidate looks correct
+4. saves the chosen site entry into `data/site_selectors.json`
+
+It works best for sites where the price is available in server-rendered HTML or in obvious price attributes such as `content` or `data-price`.
 
 ## Understanding the Memory File
 

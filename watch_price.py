@@ -59,8 +59,27 @@ def parse_price(value: str) -> str | None:
     return clean_text(match.group(0)) if match else None
 
 
+def normalize_price(value: str, currency_hint: str | None = None) -> str | None:
+    parsed = parse_price(value)
+    if parsed is not None:
+        return parsed
+
+    if currency_hint is None:
+        return None
+
+    normalized = value.strip().replace("\xa0", "").replace(" ", "").replace(",", ".")
+    if not re.fullmatch(r"\d+(?:\.\d+)?", normalized):
+        return None
+
+    integer_part, dot, fractional_part = normalized.partition(".")
+    grouped_integer = f"{int(integer_part):,}".replace(",", " ")
+    if dot and fractional_part.strip("0"):
+        return f"{grouped_integer}.{fractional_part.rstrip('0')} {currency_hint}"
+    return f"{grouped_integer} {currency_hint}"
+
+
 def parse_price_amount(value: str) -> float | None:
-    price = parse_price(value)
+    price = normalize_price(value)
     if price is None:
         return None
 
@@ -105,6 +124,8 @@ def load_state(state_path: str) -> dict[str, dict[str, str]]:
     path = Path(state_path)
     if not path.exists():
         return {}
+    if path.stat().st_size == 0:
+        return {}
 
     with path.open("r", encoding="utf-8") as file:
         data = json.load(file)
@@ -147,8 +168,8 @@ def read_links(csv_path: str) -> list[str]:
     return links
 
 
-def normalize_selectors(raw_selectors: object) -> list[tuple[str, str]]:
-    selectors: list[tuple[str, str]] = []
+def normalize_selectors(raw_selectors: object) -> list[dict[str, str]]:
+    selectors: list[dict[str, str]] = []
     if not isinstance(raw_selectors, list):
         return selectors
 
@@ -158,7 +179,14 @@ def normalize_selectors(raw_selectors: object) -> list[tuple[str, str]]:
         selector_type = entry.get("type")
         selector_value = entry.get("value")
         if selector_type in {"css", "xpath"} and isinstance(selector_value, str):
-            selectors.append((selector_type, selector_value))
+            selector_entry = {"type": selector_type, "value": selector_value}
+            attr = entry.get("attr")
+            currency = entry.get("currency")
+            if isinstance(attr, str):
+                selector_entry["attr"] = attr
+            if isinstance(currency, str):
+                selector_entry["currency"] = currency
+            selectors.append(selector_entry)
     return selectors
 
 
@@ -168,7 +196,7 @@ def host_matches(hostname: str, domain: str) -> bool:
     return normalized_host == normalized_domain or normalized_host.endswith(f".{normalized_domain}")
 
 
-def get_selectors_for_url(url: str, schema: dict[str, object]) -> tuple[str | None, list[tuple[str, str]]]:
+def get_selectors_for_url(url: str, schema: dict[str, object]) -> tuple[str | None, list[dict[str, str]]]:
     hostname = urlparse(url).hostname or ""
     sites = schema.get("sites")
     if not isinstance(sites, list):
@@ -241,7 +269,7 @@ def print_selector_results(
     url: str,
     html_text: str,
     site_name: str | None,
-    selectors: list[tuple[str, str]],
+    selectors: list[dict[str, str]],
 ) -> str | None:
     soup = BeautifulSoup(html_text, "html.parser")
     print(f"[url] {url}")
@@ -250,15 +278,26 @@ def print_selector_results(
     found_any = False
     parsed_price: str | None = None
 
-    for selector_type, selector in selectors:
+    for selector_entry in selectors:
+        selector_type = selector_entry["type"]
+        selector = selector_entry["value"]
+        currency_hint = selector_entry.get("currency")
         if selector_type == "css":
             node = soup.select_one(selector)
-            text = clean_text(node.get_text(" ", strip=True)) if node else None
+            if node is None:
+                text = None
+            elif "attr" in selector_entry:
+                attr_value = node.get(selector_entry["attr"])
+                text = clean_text(str(attr_value)) if attr_value is not None else None
+            else:
+                text = clean_text(node.get_text(" ", strip=True))
         else:
             text = try_xpath(html_text, selector)
 
-        price = parse_price(text) if text else None
+        price = normalize_price(text, currency_hint) if text else None
         print(f"- {selector_type}: {selector}")
+        if "attr" in selector_entry:
+            print(f"  attr: {selector_entry['attr']}")
         if text:
             found_any = True
             print(f"  text: {text}")
