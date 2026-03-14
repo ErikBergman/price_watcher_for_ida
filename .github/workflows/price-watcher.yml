@@ -57,6 +57,7 @@ jobs:
 
           mkdir -p runtime_data
           rclone copyto "koofr:${KOOFR_PATH}/links.csv" runtime_data/links.csv
+          rclone copyto "koofr:${KOOFR_PATH}/site_selectors.json" runtime_data/site_selectors.json
           if ! rclone copyto "koofr:${KOOFR_PATH}/price_memory.json" runtime_data/price_memory.json; then
             printf '{}\n' > runtime_data/price_memory.json
           fi
@@ -73,6 +74,7 @@ jobs:
         env:
           LINKS_CSV_PATH: runtime_data/links.csv
           PRICE_STATE_PATH: runtime_data/price_memory.json
+          SELECTOR_SCHEMA_PATH: runtime_data/site_selectors.json
         run: python watch_price.py | tee run.log
 
       - name: Upload price memory to Koofr

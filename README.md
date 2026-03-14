@@ -5,6 +5,7 @@ This project checks product pages, extracts prices, remembers the last known pri
 The repository is designed to be reusable. Runtime data is not stored in git. Instead:
 
 - input data lives in Koofr as `links.csv`
+- selector rules live in Koofr as `site_selectors.json`
 - memory lives in Koofr as `price_memory.json`
 - GitHub Actions downloads both files at the start of a run
 - the script updates `price_memory.json`
@@ -15,7 +16,8 @@ The repository is designed to be reusable. Runtime data is not stored in git. In
 For each URL in `links.csv`, the script:
 
 1. downloads the product page
-2. tries the configured selectors
+2. finds the matching site schema in `site_selectors.json`
+3. tries that site's configured selectors
 3. extracts the first valid `parsed_price`
 4. compares that price with the previous stored price
 5. prints one of these item messages:
@@ -45,6 +47,7 @@ For local testing you also need:
 - [price-watcher.yml](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/.github/workflows/price-watcher.yml): the GitHub Actions workflow
 - [requirements.txt](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/requirements.txt): Python dependencies
 - [example.links.csv](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/data/example.links.csv): example input file
+- [example.site_selectors.json](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/data/example.site_selectors.json): example selector schema
 - [.gitignore](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/.gitignore): ignores local runtime data such as `data/links.csv` and `data/price_memory.json`
 
 ## Koofr Setup
@@ -82,7 +85,81 @@ Notes:
 
 The workflow creates `price_memory.json` automatically on the first successful run if it does not already exist.
 
-### 4. Create a Koofr app-specific password
+### 4. Add `site_selectors.json`
+
+Inside the same Koofr folder, create `site_selectors.json`.
+
+This file tells the script which selectors to use for each website. The schema is based on domain matching and supports any number of sites.
+
+Example:
+
+```json
+{
+  "sites": [
+    {
+      "name": "cervera",
+      "domains": ["cervera.se", "www.cervera.se"],
+      "selectors": [
+        {
+          "type": "css",
+          "value": ".ProductInfoBlock_pdpPrice__eB8Io > span:nth-child(1)"
+        },
+        {
+          "type": "css",
+          "value": "span.ProductPrice_price___B9X_.ProductInfoBlock_pdpPrice__eB8Io.ProductInfoBlock_pdpSalePrice__6qtS6 span"
+        },
+        {
+          "type": "xpath",
+          "value": "/html/body/div[2]/main/section/div/div[3]/div[1]/div/div[1]/span[1]/span"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Schema notes:
+
+- `sites` is a list of site definitions
+- `name` is optional but useful in logs
+- `domains` is required and matches the URL hostname
+- `selectors` is required
+- each selector must have:
+  - `type`: `css` or `xpath`
+  - `value`: the selector string
+- optional: `url_contains`
+  - use this if one domain needs different selector sets for different URL patterns
+
+Example with two different sites:
+
+```json
+{
+  "sites": [
+    {
+      "name": "cervera",
+      "domains": ["cervera.se", "www.cervera.se"],
+      "selectors": [
+        {
+          "type": "css",
+          "value": ".ProductInfoBlock_pdpPrice__eB8Io > span:nth-child(1)"
+        }
+      ]
+    },
+    {
+      "name": "example-shop",
+      "domains": ["example.com", "www.example.com"],
+      "selectors": [
+        {
+          "type": "css",
+          "value": ".product-price"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 5. Create a Koofr app-specific password
 
 Use Koofr's application password feature. Do not use your normal Koofr account password in GitHub Secrets.
 
@@ -176,6 +253,7 @@ This first run is important because it confirms:
 
 - GitHub can access Koofr
 - `links.csv` is found
+- `site_selectors.json` is found
 - Telegram is configured correctly
 - `price_memory.json` gets created or updated
 
@@ -186,7 +264,7 @@ The GitHub Action does this:
 1. checks out the repository
 2. installs `rclone`
 3. configures a Koofr remote from GitHub Secrets
-4. downloads `links.csv` and `price_memory.json` into `runtime_data/`
+4. downloads `links.csv`, `site_selectors.json`, and `price_memory.json` into `runtime_data/`
 5. runs [watch_price.py](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/watch_price.py)
 6. uploads the updated `price_memory.json` back to Koofr
 7. extracts the item message from the script output
@@ -209,6 +287,7 @@ pip install -r requirements.txt
 The repository ignores these files locally:
 
 - `data/links.csv`
+- `data/site_selectors.json`
 - `data/price_memory.json`
 
 You can create them yourself for local testing.
@@ -217,6 +296,7 @@ Example:
 
 ```bash
 cp data/example.links.csv data/links.csv
+cp data/example.site_selectors.json data/site_selectors.json
 printf '{}\n' > data/price_memory.json
 ```
 
@@ -231,6 +311,7 @@ python watch_price.py
 The script supports:
 
 - `LINKS_CSV_PATH`
+- `SELECTOR_SCHEMA_PATH`
 - `PRICE_STATE_PATH`
 - `FETCH_TIMEOUT_SECONDS`
 - `FETCH_URL`
@@ -238,7 +319,7 @@ The script supports:
 Example:
 
 ```bash
-LINKS_CSV_PATH=runtime_data/links.csv PRICE_STATE_PATH=runtime_data/price_memory.json python watch_price.py
+LINKS_CSV_PATH=runtime_data/links.csv SELECTOR_SCHEMA_PATH=runtime_data/site_selectors.json PRICE_STATE_PATH=runtime_data/price_memory.json python watch_price.py
 ```
 
 ## Understanding the Memory File
@@ -286,6 +367,24 @@ Example:
 
 - wrong: `/Users/erikbergman/Koofr/prices_for_ida`
 - right: `My desktop sync/prices_for_ida`
+
+### No selector schema matched this URL
+
+This means the URL domain does not match any site definition in `site_selectors.json`.
+
+Check:
+
+- the domain in the URL
+- the `domains` list in the site schema
+- any `url_contains` rules you added
+
+### `site_selectors.json` download fails
+
+Check:
+
+- the file exists in Koofr
+- it is named exactly `site_selectors.json`
+- it is inside the folder pointed to by `KOOFR_PATH`
 
 ### Telegram message does not arrive
 
