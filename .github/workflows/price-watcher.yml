@@ -21,7 +21,7 @@ jobs:
           sudo -v
           curl https://rclone.org/install.sh | sudo bash
 
-      - name: Download runtime data from Koofr
+      - name: Debug Koofr paths
         env:
           KOOFR_EMAIL: ${{ secrets.KOOFR_EMAIL }}
           KOOFR_APP_PASSWORD: ${{ secrets.KOOFR_APP_PASSWORD }}
@@ -38,6 +38,24 @@ jobs:
           printf '[koofr]\ntype = koofr\nprovider = koofr\nuser = %s\npassword = %s\n' \
             "$KOOFR_EMAIL" "$obscured_password" > ~/.config/rclone/rclone.conf
 
+          echo "Top level:"
+          rclone lsd koofr:
+          echo "Target folder:"
+          rclone lsd "koofr:${KOOFR_PATH}"
+
+      - name: Download runtime data from Koofr
+        env:
+          KOOFR_EMAIL: ${{ secrets.KOOFR_EMAIL }}
+          KOOFR_APP_PASSWORD: ${{ secrets.KOOFR_APP_PASSWORD }}
+          KOOFR_PATH: ${{ secrets.KOOFR_PATH }}
+        shell: bash
+        run: |
+          if [[ -z "$KOOFR_EMAIL" || -z "$KOOFR_APP_PASSWORD" || -z "$KOOFR_PATH" ]]; then
+            echo "Missing Koofr secrets. Expected KOOFR_EMAIL, KOOFR_APP_PASSWORD, and KOOFR_PATH."
+            exit 1
+          fi
+
+          mkdir -p runtime_data
           rclone copyto "koofr:${KOOFR_PATH}/links.csv" runtime_data/links.csv
           if ! rclone copyto "koofr:${KOOFR_PATH}/price_memory.json" runtime_data/price_memory.json; then
             printf '{}\n' > runtime_data/price_memory.json
