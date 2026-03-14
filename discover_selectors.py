@@ -9,12 +9,18 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, Tag
+from rich.markup import escape
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
+from rich.table import Table
 
 from watch_price import DEFAULT_SELECTOR_SCHEMA_PATH, clean_text, fetch_html, normalize_price
 
 
 MAX_TRIES = 3
 SKIP_TAGS = {"script", "style", "noscript", "svg", "path", "head"}
+console = Console()
 
 
 @dataclass
@@ -246,39 +252,63 @@ def upsert_site(schema: dict[str, object], site_entry: dict[str, object]) -> Non
 
 
 def prompt_yes_no(prompt: str) -> bool:
-    return input(prompt).strip().lower() in {"y", "yes"}
+    return Confirm.ask(prompt, default=False)
+
+
+def render_candidate(candidate: Candidate, index: int, total: int) -> None:
+    table = Table(show_header=False, box=None, pad_edge=False)
+    table.add_column("Field", style="bold cyan", no_wrap=True)
+    table.add_column("Value", style="white")
+    table.add_row("Source", escape(candidate.source))
+    table.add_row("Text", escape(candidate.text))
+    table.add_row("Parsed", f"[bold green]{escape(candidate.parsed_price)}[/bold green]")
+    table.add_row("CSS", escape(candidate.css_selector))
+    if candidate.attr:
+        table.add_row("Attr", escape(candidate.attr))
+    table.add_row("XPath", escape(candidate.xpath_selector))
+
+    console.print(
+        Panel(
+            table,
+            title=f"Candidate {index}/{total}",
+            border_style="blue",
+            expand=False,
+        )
+    )
 
 
 def discover(url: str, schema_path: Path, timeout_s: int) -> int:
-    print(f"[discover_url] {url}")
+    console.print(Panel.fit(f"[bold]Discover URL[/bold]\n{url}", border_style="magenta"))
     html_text = fetch_html(url, timeout_s)
     candidates = collect_candidates(html_text)
     if not candidates:
-        print("No price-like candidates were found in the server-rendered HTML.")
+        console.print("[bold red]No price-like candidates were found in the server-rendered HTML.[/bold red]")
         return 1
 
+    total = min(len(candidates), MAX_TRIES)
     for index, candidate in enumerate(candidates[:MAX_TRIES], start=1):
-        print(f"\nCandidate {index}/{min(len(candidates), MAX_TRIES)}")
-        print(f"source: {candidate.source}")
-        print(f"text: {candidate.text}")
-        print(f"parsed_price: {candidate.parsed_price}")
-        print(f"css: {candidate.css_selector}")
-        if candidate.attr:
-            print(f"attr: {candidate.attr}")
-        print(f"xpath: {candidate.xpath_selector}")
-
-        if not prompt_yes_no("Does this look like the correct price? [y/N]: "):
+        render_candidate(candidate, index, total)
+        if not prompt_yes_no("Does this look like the correct price?"):
             continue
 
         schema = load_schema(schema_path)
         site_entry = build_site_entry(url, candidate, candidates)
         upsert_site(schema, site_entry)
         save_schema(schema_path, schema)
-        print(f"Saved schema for {site_entry['name']} to {schema_path}")
-        print(f"Stored {len(site_entry['selectors'])} selector fallbacks.")
+        console.print(
+            Panel.fit(
+                (
+                    f"[bold green]Saved schema[/bold green]\n"
+                    f"Site: {site_entry['name']}\n"
+                    f"Path: {schema_path}\n"
+                    f"Fallback selectors: {len(site_entry['selectors'])}"
+                ),
+                border_style="green",
+            )
+        )
         return 0
 
-    print("No candidate was confirmed. No schema changes were saved.")
+    console.print("[bold yellow]No candidate was confirmed. No schema changes were saved.[/bold yellow]")
     return 1
 
 
@@ -292,9 +322,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
-    url = args.url or input("Enter product URL: ").strip()
+    url = args.url or Prompt.ask("Enter product URL").strip()
     if not url:
-        print("A URL is required.")
+        console.print("[bold red]A URL is required.[/bold red]")
         return 1
     return discover(url, Path(args.schema_path), args.timeout)
 
