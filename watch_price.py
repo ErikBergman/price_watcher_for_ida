@@ -21,9 +21,10 @@ except Exception:
 DEFAULT_URL = (
     "https://www.cervera.se/produkt/rorstrand-mon-amie-mon-amie-mugg-34cl-4-pack-med-hankel"
 )
-DEFAULT_LINKS_CSV = "data/links.csv"
-DEFAULT_STATE_PATH = "data/price_memory.json"
-DEFAULT_SELECTOR_SCHEMA_PATH = "data/site_selectors.json"
+DEFAULT_DATA_DIR_ENV = "PRICE_WATCHER_DATA_DIR"
+DEFAULT_LINKS_CSV = "links.csv"
+DEFAULT_STATE_PATH = "price_memory.json"
+DEFAULT_SELECTOR_SCHEMA_PATH = "site_selectors.json"
 
 
 DEFAULT_SELECTOR_SCHEMA = {
@@ -48,6 +49,13 @@ DEFAULT_SELECTOR_SCHEMA = {
         }
     ]
 }
+
+
+def default_data_path(filename: str) -> str:
+    data_dir = os.getenv(DEFAULT_DATA_DIR_ENV)
+    if data_dir:
+        return str(Path(data_dir).expanduser() / filename)
+    return str(Path("data") / filename)
 
 
 def clean_text(value: str) -> str:
@@ -316,9 +324,11 @@ def print_selector_results(
 
 
 def main() -> int:
-    csv_path = os.getenv("LINKS_CSV_PATH", DEFAULT_LINKS_CSV)
-    state_path = os.getenv("PRICE_STATE_PATH", DEFAULT_STATE_PATH)
-    selector_schema_path = os.getenv("SELECTOR_SCHEMA_PATH", DEFAULT_SELECTOR_SCHEMA_PATH)
+    csv_path = os.getenv("LINKS_CSV_PATH", default_data_path(DEFAULT_LINKS_CSV))
+    state_path = os.getenv("PRICE_STATE_PATH", default_data_path(DEFAULT_STATE_PATH))
+    selector_schema_path = os.getenv(
+        "SELECTOR_SCHEMA_PATH", default_data_path(DEFAULT_SELECTOR_SCHEMA_PATH)
+    )
     urls = read_links(csv_path)
     if not urls:
         urls = [os.getenv("FETCH_URL", DEFAULT_URL)]

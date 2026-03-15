@@ -7,9 +7,38 @@ The repository is designed to be reusable. Runtime data is not stored in git. In
 - input data lives in Koofr as `links.csv`
 - selector rules live in Koofr as `site_selectors.json`
 - memory lives in Koofr as `price_memory.json`
-- GitHub Actions downloads both files at the start of a run
+- GitHub Actions downloads those files at the start of a run
 - the script updates `price_memory.json`
 - GitHub Actions uploads the updated memory file back to Koofr
+
+## How The Files Flow
+
+The easiest way to think about this project is:
+
+- the code lives in this GitHub repository
+- the changing data lives in one Koofr folder
+- both your local scripts and GitHub Actions use that same Koofr-backed data
+
+That means these three files are the important ones:
+
+- `links.csv`: which product pages to check
+- `site_selectors.json`: how to find the price on each site
+- `price_memory.json`: the last known prices
+
+You should think of your Koofr folder as the main storage location for those files.
+
+Example:
+
+- local Koofr-synced folder on your Mac: `/Users/erikbergman/Koofr/prices_for_ida`
+- matching Koofr path used by GitHub Actions: `My desktop sync/prices_for_ida`
+
+So in practice:
+
+- when you run the helper locally, it should save directly into `/Users/erikbergman/Koofr/prices_for_ida`
+- when GitHub Actions runs, it downloads the same files from `My desktop sync/prices_for_ida`
+- when the watcher updates price memory, that updated memory goes back into the same Koofr folder
+
+This avoids manual copying and keeps local use and GitHub Actions in sync.
 
 ## What the Script Does
 
@@ -18,9 +47,9 @@ For each URL in `links.csv`, the script:
 1. downloads the product page
 2. finds the matching site schema in `site_selectors.json`
 3. tries that site's configured selectors
-3. extracts the first valid `parsed_price`
-4. compares that price with the previous stored price
-5. prints one of these item messages:
+4. extracts the first valid `parsed_price`
+5. compares that price with the previous stored price
+6. prints one of these item messages:
 
 - first time seen: `Current price: 235 kr`
 - unchanged: `The item remains at 235 kr.`
@@ -66,6 +95,24 @@ Important:
 
 - do not use your local macOS path as `KOOFR_PATH`
 - use the Koofr-visible path, such as `My desktop sync/prices_for_ida`
+
+### 1a. Make your local scripts use the Koofr folder automatically
+
+If you want local commands such as `python watch_price.py` and `python discover_selectors.py` to use the Koofr-synced folder automatically, set this environment variable:
+
+```bash
+export PRICE_WATCHER_DATA_DIR=~/Koofr/prices_for_ida
+```
+
+After that, the scripts will automatically use:
+
+- `~/Koofr/prices_for_ida/links.csv`
+- `~/Koofr/prices_for_ida/site_selectors.json`
+- `~/Koofr/prices_for_ida/price_memory.json`
+
+This is the simplest setup for beginners because you do not need to pass file paths manually.
+
+If you want this to be permanent in Terminal, add the same line to your `~/.zshrc`.
 
 ### 2. Add `links.csv`
 
@@ -348,6 +395,31 @@ The helper:
 4. saves the chosen site entry into `data/site_selectors.json`
 
 It works best for sites where the price is available in server-rendered HTML or in obvious price attributes such as `content` or `data-price`.
+
+If `PRICE_WATCHER_DATA_DIR` is set, the helper will save directly into your Koofr-synced folder instead of the local `data/` folder.
+
+You can still override individual files with:
+
+- `LINKS_CSV_PATH`
+- `SELECTOR_SCHEMA_PATH`
+- `PRICE_STATE_PATH`
+
+### Beginner Example
+
+If your Koofr folder is `/Users/erikbergman/Koofr/prices_for_ida`, a simple beginner workflow is:
+
+```bash
+export PRICE_WATCHER_DATA_DIR=~/Koofr/prices_for_ida
+python discover_selectors.py "https://www.ajprodukter.se/p/mysgrop-159471-65877"
+python watch_price.py
+```
+
+What happens here:
+
+- the helper saves the new selector entry into your Koofr-synced `site_selectors.json`
+- the watcher reads `links.csv` from the same Koofr-synced folder
+- the watcher updates `price_memory.json` in that same folder
+- GitHub Actions can later use the same files through Koofr
 
 ## Understanding the Memory File
 

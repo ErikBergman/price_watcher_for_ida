@@ -15,7 +15,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from watch_price import DEFAULT_SELECTOR_SCHEMA_PATH, clean_text, fetch_html, normalize_price
+from watch_price import clean_text, default_data_path, fetch_html, normalize_price
 
 
 MAX_TRIES = 3
@@ -315,18 +315,38 @@ def discover(url: str, schema_path: Path, timeout_s: int) -> int:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Discover selector entries for a product page.")
     parser.add_argument("url", nargs="?", help="Product URL to inspect.")
-    parser.add_argument("--schema-path", default=DEFAULT_SELECTOR_SCHEMA_PATH)
+    parser.add_argument("--schema-path", default=default_data_path("site_selectors.json"))
     parser.add_argument("--timeout", type=int, default=20)
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
+    schema_path = Path(args.schema_path).expanduser()
+    data_dir = schema_path.parent
+    configured_data_dir = data_dir if data_dir.name != "data" or data_dir.is_absolute() else None
+
     url = args.url or Prompt.ask("Enter product URL").strip()
     if not url:
         console.print("[bold red]A URL is required.[/bold red]")
         return 1
-    return discover(url, Path(args.schema_path), args.timeout)
+
+    config_lines = [f"Schema path: {schema_path}"]
+    if configured_data_dir is not None:
+        config_lines.append(f"Data directory: {data_dir}")
+    else:
+        config_lines.append("Data directory: local repository data/")
+        config_lines.append("Set PRICE_WATCHER_DATA_DIR or --schema-path to save into Koofr.")
+
+    console.print(
+        Panel.fit(
+            "\n".join(config_lines),
+            title="Discovery Config",
+            border_style="cyan",
+        )
+    )
+
+    return discover(url, schema_path, args.timeout)
 
 
 if __name__ == "__main__":
