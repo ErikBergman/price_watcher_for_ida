@@ -321,7 +321,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv or sys.argv[1:])
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     schema_path = Path(args.schema_path).expanduser()
     data_dir = schema_path.parent
     configured_data_dir = data_dir if data_dir.name != "data" or data_dir.is_absolute() else None
