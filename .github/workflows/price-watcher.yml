@@ -9,7 +9,7 @@ jobs:
   watch-price:
     runs-on: ubuntu-latest
     env:
-      WATCH_MODE: ${{ vars.WATCH_MODE }}
+      WATCH_MODE: ${{ vars.WATCH_MODE || 'discount' }}
     outputs:
       parsed_price_field: ${{ steps.extract.outputs.parsed_price_field }}
       parsed_price_value: ${{ steps.extract.outputs.parsed_price_value }}
@@ -59,9 +59,11 @@ jobs:
           fi
 
           mkdir -p runtime_data
-          watch_mode="${WATCH_MODE:-price}"
+          watch_mode="${WATCH_MODE:-discount}"
           if [[ "$watch_mode" == "discount" ]]; then
-            rclone copyto "koofr:${KOOFR_PATH}/discount_watchers.json" runtime_data/discount_watchers.json
+            if ! rclone copyto "koofr:${KOOFR_PATH}/discount_watchers.json" runtime_data/discount_watchers.json; then
+              cp data/example.discount_watchers.json runtime_data/discount_watchers.json
+            fi
             if ! rclone copyto "koofr:${KOOFR_PATH}/discount_memory.json" runtime_data/discount_memory.json; then
               printf '{}\n' > runtime_data/discount_memory.json
             fi
@@ -103,7 +105,7 @@ jobs:
             exit 0
           fi
 
-          watch_mode="${WATCH_MODE:-price}"
+          watch_mode="${WATCH_MODE:-discount}"
           if [[ "$watch_mode" == "discount" ]]; then
             if [[ ! -f runtime_data/discount_memory.json ]]; then
               echo "Skipping Koofr upload: runtime_data/discount_memory.json not found."

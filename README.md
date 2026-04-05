@@ -56,6 +56,8 @@ In `WATCH_MODE=discount`, the script instead:
 5. remembers whether the alert set changed in `discount_memory.json`
 6. prints an item message only when a discount alert appears, changes, or clears
 
+The GitHub Actions workflow currently defaults to `WATCH_MODE=discount` unless you override it with a repository variable.
+
 ## Requirements
 
 You need:
