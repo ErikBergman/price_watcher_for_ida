@@ -5,12 +5,13 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 try:
     from lxml import html as lxml_html  # type: ignore
@@ -21,10 +22,13 @@ except Exception:
 DEFAULT_URL = (
     "https://www.cervera.se/produkt/rorstrand-mon-amie-mon-amie-mugg-34cl-4-pack-med-hankel"
 )
+DEFAULT_WATCH_MODE = "price"
 DEFAULT_DATA_DIR_ENV = "PRICE_WATCHER_DATA_DIR"
 DEFAULT_LINKS_CSV = "links.csv"
 DEFAULT_STATE_PATH = "price_memory.json"
 DEFAULT_SELECTOR_SCHEMA_PATH = "site_selectors.json"
+DEFAULT_DISCOUNT_CONFIG_PATH = "discount_watchers.json"
+DEFAULT_DISCOUNT_STATE_PATH = "discount_memory.json"
 
 
 DEFAULT_SELECTOR_SCHEMA = {
@@ -49,6 +53,15 @@ DEFAULT_SELECTOR_SCHEMA = {
         }
     ]
 }
+
+
+DEFAULT_DISCOUNT_CONFIG = {"watches": []}
+
+
+@dataclass(frozen=True)
+class DiscountMatch:
+    title: str
+    discount_percent: int
 
 
 def default_data_path(filename: str) -> str:
@@ -103,6 +116,26 @@ def parse_price_amount(value: str) -> float | None:
         return None
 
 
+def parse_discount_percent(value: str) -> int | None:
+    match = re.search(r"-\s*(\d+)\s*%", value)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def coerce_positive_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float):
+        return int(value) if value > 0 and value.is_integer() else None
+    if isinstance(value, str) and value.strip().isdigit():
+        parsed = int(value.strip())
+        return parsed if parsed > 0 else None
+    return None
+
+
 def fetch_html(url: str, timeout_s: int) -> str:
     headers = {
         "User-Agent": (
@@ -126,6 +159,17 @@ def load_selector_schema(schema_path: str) -> dict[str, object]:
         data = json.load(file)
 
     return data if isinstance(data, dict) else DEFAULT_SELECTOR_SCHEMA
+
+
+def load_discount_config(config_path: str) -> dict[str, object]:
+    path = Path(config_path)
+    if not path.exists():
+        return DEFAULT_DISCOUNT_CONFIG
+
+    with path.open("r", encoding="utf-8") as file:
+        data = json.load(file)
+
+    return data if isinstance(data, dict) else DEFAULT_DISCOUNT_CONFIG
 
 
 def load_state(state_path: str) -> dict[str, dict[str, str]]:
@@ -198,6 +242,52 @@ def normalize_selectors(raw_selectors: object) -> list[dict[str, str]]:
     return selectors
 
 
+def normalize_discount_watches(raw_watches: object) -> list[dict[str, object]]:
+    watches: list[dict[str, object]] = []
+    if not isinstance(raw_watches, list):
+        return watches
+
+    for entry in raw_watches:
+        if not isinstance(entry, dict):
+            continue
+
+        name = entry.get("name")
+        url = entry.get("url")
+        item_selector = entry.get("item_selector")
+        discount_selector = entry.get("discount_selector")
+        min_discount_percent = coerce_positive_int(entry.get("min_discount_percent"))
+        if not (
+            isinstance(name, str)
+            and isinstance(url, str)
+            and isinstance(item_selector, str)
+            and isinstance(discount_selector, str)
+            and min_discount_percent is not None
+        ):
+            continue
+
+        watch: dict[str, object] = {
+            "name": name,
+            "url": url,
+            "item_selector": item_selector,
+            "discount_selector": discount_selector,
+            "min_discount_percent": min_discount_percent,
+        }
+
+        title_selector = entry.get("title_selector")
+        title_attr = entry.get("title_attr")
+        max_items = coerce_positive_int(entry.get("max_items"))
+        if isinstance(title_selector, str):
+            watch["title_selector"] = title_selector
+        if isinstance(title_attr, str):
+            watch["title_attr"] = title_attr
+        if max_items is not None:
+            watch["max_items"] = max_items
+
+        watches.append(watch)
+
+    return watches
+
+
 def host_matches(hostname: str, domain: str) -> bool:
     normalized_host = hostname.lower()
     normalized_domain = domain.lower()
@@ -246,6 +336,162 @@ def try_xpath(html_text: str, xpath: str) -> str | None:
     node = result[0]
     raw = node.text_content() if hasattr(node, "text_content") else str(node)
     return clean_text(raw)
+
+
+def extract_node_text(node: Tag | None, attr: str | None = None) -> str | None:
+    if node is None:
+        return None
+
+    if attr is not None:
+        attr_value = node.get(attr)
+        if attr_value is None:
+            return None
+        return clean_text(str(attr_value))
+
+    return clean_text(node.get_text(" ", strip=True))
+
+
+def derive_discount_title(
+    item_node: Tag,
+    title_selector: str | None,
+    title_attr: str | None,
+    discount_text: str | None,
+) -> str:
+    candidate_selectors: list[tuple[str, str | None]] = []
+    if title_selector is not None:
+        candidate_selectors.append((title_selector, title_attr))
+    candidate_selectors.extend(
+        [
+            ("h1", "title"),
+            ("h1", None),
+            ("h2", "title"),
+            ("h2", None),
+            ("h3", "title"),
+            ("h3", None),
+            ("img", "alt"),
+            ("[title]", "title"),
+        ]
+    )
+
+    for selector, attr in candidate_selectors:
+        node = item_node.select_one(selector)
+        text = extract_node_text(node, attr)
+        if text:
+            return text.removeprefix("Kylfrysar ").strip()
+
+    text = clean_text(item_node.get_text(" ", strip=True))
+    if discount_text and text.startswith(discount_text):
+        text = text[len(discount_text):].strip()
+    text = re.sub(r"^\d+\s+", "", text)
+    return text
+
+
+def build_discount_alert_key(matches: list[DiscountMatch]) -> str:
+    return "\n".join(
+        f"{match.discount_percent}|{match.title}"
+        for match in matches
+    )
+
+
+def build_discount_state_key(watch: dict[str, object]) -> str:
+    name = str(watch.get("name", "")).strip()
+    url = str(watch.get("url", "")).strip()
+    threshold = str(watch.get("min_discount_percent", "")).strip()
+    return f"{name}|{url}|{threshold}"
+
+
+def extract_discount_matches(
+    html_text: str,
+    watch: dict[str, object],
+) -> list[DiscountMatch]:
+    soup = BeautifulSoup(html_text, "html.parser")
+    item_selector = str(watch["item_selector"])
+    discount_selector = str(watch["discount_selector"])
+    min_discount_percent = int(watch["min_discount_percent"])
+    title_selector = watch.get("title_selector")
+    title_attr = watch.get("title_attr")
+    max_items = watch.get("max_items")
+
+    matches: list[DiscountMatch] = []
+    seen: set[tuple[int, str]] = set()
+    for item_node in soup.select(item_selector):
+        discount_text = extract_node_text(item_node.select_one(discount_selector))
+        if not discount_text:
+            continue
+
+        discount_percent = parse_discount_percent(discount_text)
+        if discount_percent is None or discount_percent < min_discount_percent:
+            continue
+
+        title = derive_discount_title(
+            item_node,
+            title_selector if isinstance(title_selector, str) else None,
+            title_attr if isinstance(title_attr, str) else None,
+            discount_text,
+        )
+        key = (discount_percent, title)
+        if key in seen:
+            continue
+        seen.add(key)
+        matches.append(DiscountMatch(title=title, discount_percent=discount_percent))
+
+        if isinstance(max_items, int) and len(matches) >= max_items:
+            break
+
+    return matches
+
+
+def print_discount_watch_results(
+    watch: dict[str, object],
+    matches: list[DiscountMatch],
+) -> None:
+    print(f"[watch] {watch['name']}")
+    print(f"[url] {watch['url']}")
+    print(f"[threshold_percent] {watch['min_discount_percent']}")
+    print("[discount_results]")
+    if not matches:
+        print("No discounts met the threshold.")
+    for match in matches:
+        print(f"- -{match.discount_percent}% | {match.title}")
+    print(
+        "[watch_result] "
+        f"{len(matches)} discounts at or above {watch['min_discount_percent']}%"
+    )
+
+
+def build_discount_item_message(
+    watch: dict[str, object],
+    matches: list[DiscountMatch],
+    previous_entry: dict[str, str] | None,
+    today_iso: str,
+) -> str | None:
+    threshold = int(watch["min_discount_percent"])
+    previous_status = previous_entry.get("status") if previous_entry else None
+    previous_alert_key = previous_entry.get("alert_key") if previous_entry else None
+
+    if not matches:
+        if previous_status == "alerting":
+            return (
+                f"On {today_iso}, {watch['name']} no longer has discounts "
+                f"at or above {threshold}%."
+            )
+        return None
+
+    alert_key = build_discount_alert_key(matches)
+    if previous_status == "alerting" and previous_alert_key == alert_key:
+        return None
+
+    lines = [
+        (
+            f"{watch['name']}: {len(matches)} discounts at or above "
+            f"{threshold}% on {today_iso}."
+        )
+    ]
+    for match in matches[:5]:
+        lines.append(f"- -{match.discount_percent}% {match.title}")
+    if len(matches) > 5:
+        lines.append(f"- Plus {len(matches) - 5} more matches.")
+    return "\n".join(lines)
 
 
 def build_item_message(
@@ -323,7 +569,7 @@ def print_selector_results(
     return parsed_price
 
 
-def main() -> int:
+def run_price_mode() -> int:
     csv_path = os.getenv("LINKS_CSV_PATH", default_data_path(DEFAULT_LINKS_CSV))
     state_path = os.getenv("PRICE_STATE_PATH", default_data_path(DEFAULT_STATE_PATH))
     selector_schema_path = os.getenv(
@@ -382,6 +628,84 @@ def main() -> int:
     print(f"total_links: {len(urls)}")
     print(f"item_messages: {len(item_messages)}")
     return 0
+
+
+def run_discount_mode() -> int:
+    config_path = os.getenv(
+        "DISCOUNT_CONFIG_PATH", default_data_path(DEFAULT_DISCOUNT_CONFIG_PATH)
+    )
+    state_path = os.getenv(
+        "DISCOUNT_STATE_PATH", default_data_path(DEFAULT_DISCOUNT_STATE_PATH)
+    )
+    timeout_s = int(os.getenv("FETCH_TIMEOUT_SECONDS", "20"))
+    today_iso = date.today().isoformat()
+    config = load_discount_config(config_path)
+    watches = normalize_discount_watches(config.get("watches"))
+    state = load_state(state_path)
+    print(f"[watch_mode] discount")
+    print(f"[discount_config_path] {config_path}")
+    print(f"[discount_state_path] {state_path}")
+    print(f"[watch_count] {len(watches)}")
+
+    if not watches:
+        print("[error] No valid discount watches were found in the config.")
+        return 1
+
+    matches = 0
+    failures = 0
+    item_messages: list[str] = []
+    updated_state = state.copy()
+    for index, watch in enumerate(watches, start=1):
+        print(f"\n=== Watch {index}/{len(watches)} ===")
+        url = str(watch["url"])
+        state_key = build_discount_state_key(watch)
+        previous_entry = state.get(state_key)
+
+        try:
+            html_text = fetch_html(url, timeout_s)
+        except requests.RequestException as exc:
+            failures += 1
+            print(f"[watch] {watch['name']}")
+            print(f"[url] {url}")
+            print(f"[error] {exc}")
+            continue
+
+        discount_matches = extract_discount_matches(html_text, watch)
+        print_discount_watch_results(watch, discount_matches)
+        if discount_matches:
+            matches += 1
+
+        message = build_discount_item_message(
+            watch,
+            discount_matches,
+            previous_entry,
+            today_iso,
+        )
+        if message:
+            print(f"[item_message] {message}")
+            item_messages.append(message)
+
+        updated_state[state_key] = {
+            "alert_key": build_discount_alert_key(discount_matches),
+            "last_checked": today_iso,
+            "last_message": message or "",
+            "status": "alerting" if discount_matches else "clear",
+        }
+
+    save_state(state_path, updated_state)
+    print("\n[summary]")
+    print(f"matching_watches: {matches}")
+    print(f"failed_watches: {failures}")
+    print(f"total_watches: {len(watches)}")
+    print(f"item_messages: {len(item_messages)}")
+    return 0
+
+
+def main() -> int:
+    watch_mode = os.getenv("WATCH_MODE", DEFAULT_WATCH_MODE).strip().lower()
+    if watch_mode in {"discount", "discounts"}:
+        return run_discount_mode()
+    return run_price_mode()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,14 @@
+{
+  "watches": [
+    {
+      "name": "PriceRunner Kylfrysar",
+      "url": "https://www.pricerunner.se/cl/16/Kylfrysar?sort=price_drop",
+      "item_selector": "div.pr-ugbjc3",
+      "discount_selector": "div.pr-nkf7ss",
+      "title_selector": "h2",
+      "title_attr": "title",
+      "min_discount_percent": 40,
+      "max_items": 12
+    }
+  ]
+}

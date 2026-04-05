@@ -124,6 +124,7 @@ data/*.csv
 data/*.json
 !data/example.links.csv
 !data/example.site_selectors.json
+!data/example.discount_watchers.json
 #   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
 #pixi.lock
 #   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one

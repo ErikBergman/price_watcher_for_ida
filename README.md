@@ -1,16 +1,21 @@
 # Price Watcher for Ida
 
-This project monitors product pages, extracts prices, remembers the last known price for each item, and sends a Telegram message when the GitHub Action runs.
+This project monitors product pages, extracts prices or discount badges, remembers the last known result, and sends a Telegram message when the GitHub Action runs.
 
 The repository is intended to be reusable. The code lives in GitHub. The changing data lives outside git in one Koofr folder.
 
 ## Overview
 
-There are three runtime files:
+Price mode uses three runtime files:
 
 - `links.csv`: the product URLs to check
 - `site_selectors.json`: the selector rules for each website
 - `price_memory.json`: the last known price per URL
+
+Discount mode uses two optional runtime files:
+
+- `discount_watchers.json`: category or listing pages plus discount-threshold rules
+- `discount_memory.json`: the last known alert state for each discount watch
 
 Those files should live in one Koofr folder.
 
@@ -27,7 +32,7 @@ That means:
 
 ## What The Project Does
 
-For each URL in `links.csv`, [watch_price.py](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/watch_price.py):
+In the default price mode, for each URL in `links.csv`, [watch_price.py](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/watch_price.py):
 
 1. downloads the product page
 2. finds the matching site definition in `site_selectors.json`
@@ -41,6 +46,15 @@ The item message is one of these:
 - first time seen: `Current price: 235 kr`
 - unchanged: `The item remains at 235 kr.`
 - changed: `On 2026-03-14, the item's price decreased from 299 kr to 235 kr.`
+
+In `WATCH_MODE=discount`, the script instead:
+
+1. loads watches from `discount_watchers.json`
+2. fetches each category or listing page
+3. extracts discount badges within configured item containers
+4. keeps only discounts at or above `min_discount_percent`
+5. remembers whether the alert set changed in `discount_memory.json`
+6. prints an item message only when a discount alert appears, changes, or clears
 
 ## Requirements
 
@@ -338,6 +352,21 @@ python watch_price.py
 
 If `PRICE_WATCHER_DATA_DIR` is set, it uses the Koofr-synced files. Otherwise it uses local `data/`.
 
+### Run discount-threshold mode locally
+
+```bash
+WATCH_MODE=discount \
+DISCOUNT_CONFIG_PATH=data/example.discount_watchers.json \
+python watch_price.py
+```
+
+Useful discount-mode environment variables:
+
+- `WATCH_MODE`
+- `DISCOUNT_CONFIG_PATH`
+- `DISCOUNT_STATE_PATH`
+- `FETCH_TIMEOUT_SECONDS`
+
 ### Override individual paths manually
 
 You can override any file path explicitly:
@@ -418,6 +447,7 @@ The watcher uses this file to determine whether an item is:
 - [requirements.txt](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/requirements.txt): Python dependencies
 - [example.links.csv](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/data/example.links.csv): example URL list
 - [example.site_selectors.json](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/data/example.site_selectors.json): example selector schema
+- [example.discount_watchers.json](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/data/example.discount_watchers.json): example discount-watch config
 
 ## VS Code Notes
 

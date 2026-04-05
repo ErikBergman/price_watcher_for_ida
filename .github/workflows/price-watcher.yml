@@ -8,6 +8,8 @@ on:
 jobs:
   watch-price:
     runs-on: ubuntu-latest
+    env:
+      WATCH_MODE: ${{ vars.WATCH_MODE }}
     outputs:
       parsed_price_field: ${{ steps.extract.outputs.parsed_price_field }}
       parsed_price_value: ${{ steps.extract.outputs.parsed_price_value }}
@@ -48,6 +50,7 @@ jobs:
           KOOFR_EMAIL: ${{ secrets.KOOFR_EMAIL }}
           KOOFR_APP_PASSWORD: ${{ secrets.KOOFR_APP_PASSWORD }}
           KOOFR_PATH: ${{ secrets.KOOFR_PATH }}
+          WATCH_MODE: ${{ env.WATCH_MODE }}
         shell: bash
         run: |
           if [[ -z "$KOOFR_EMAIL" || -z "$KOOFR_APP_PASSWORD" || -z "$KOOFR_PATH" ]]; then
@@ -56,10 +59,18 @@ jobs:
           fi
 
           mkdir -p runtime_data
-          rclone copyto "koofr:${KOOFR_PATH}/links.csv" runtime_data/links.csv
-          rclone copyto "koofr:${KOOFR_PATH}/site_selectors.json" runtime_data/site_selectors.json
-          if ! rclone copyto "koofr:${KOOFR_PATH}/price_memory.json" runtime_data/price_memory.json; then
-            printf '{}\n' > runtime_data/price_memory.json
+          watch_mode="${WATCH_MODE:-price}"
+          if [[ "$watch_mode" == "discount" ]]; then
+            rclone copyto "koofr:${KOOFR_PATH}/discount_watchers.json" runtime_data/discount_watchers.json
+            if ! rclone copyto "koofr:${KOOFR_PATH}/discount_memory.json" runtime_data/discount_memory.json; then
+              printf '{}\n' > runtime_data/discount_memory.json
+            fi
+          else
+            rclone copyto "koofr:${KOOFR_PATH}/links.csv" runtime_data/links.csv
+            rclone copyto "koofr:${KOOFR_PATH}/site_selectors.json" runtime_data/site_selectors.json
+            if ! rclone copyto "koofr:${KOOFR_PATH}/price_memory.json" runtime_data/price_memory.json; then
+              printf '{}\n' > runtime_data/price_memory.json
+            fi
           fi
 
       - name: Setup Python
@@ -72,15 +83,19 @@ jobs:
 
       - name: Run price watcher
         env:
+          WATCH_MODE: ${{ env.WATCH_MODE }}
           LINKS_CSV_PATH: runtime_data/links.csv
           PRICE_STATE_PATH: runtime_data/price_memory.json
           SELECTOR_SCHEMA_PATH: runtime_data/site_selectors.json
+          DISCOUNT_CONFIG_PATH: runtime_data/discount_watchers.json
+          DISCOUNT_STATE_PATH: runtime_data/discount_memory.json
         run: python watch_price.py | tee run.log
 
       - name: Upload price memory to Koofr
         if: always()
         env:
           KOOFR_PATH: ${{ secrets.KOOFR_PATH }}
+          WATCH_MODE: ${{ env.WATCH_MODE }}
         shell: bash
         run: |
           if [[ -z "$KOOFR_PATH" ]]; then
@@ -88,25 +103,37 @@ jobs:
             exit 0
           fi
 
-          if [[ ! -f runtime_data/price_memory.json ]]; then
-            echo "Skipping Koofr upload: runtime_data/price_memory.json not found."
-            exit 0
-          fi
+          watch_mode="${WATCH_MODE:-price}"
+          if [[ "$watch_mode" == "discount" ]]; then
+            if [[ ! -f runtime_data/discount_memory.json ]]; then
+              echo "Skipping Koofr upload: runtime_data/discount_memory.json not found."
+              exit 0
+            fi
 
-          rclone copyto runtime_data/price_memory.json "koofr:${KOOFR_PATH}/price_memory.json"
+            rclone copyto runtime_data/discount_memory.json "koofr:${KOOFR_PATH}/discount_memory.json"
+          else
+            if [[ ! -f runtime_data/price_memory.json ]]; then
+              echo "Skipping Koofr upload: runtime_data/price_memory.json not found."
+              exit 0
+            fi
+
+            rclone copyto runtime_data/price_memory.json "koofr:${KOOFR_PATH}/price_memory.json"
+          fi
 
       - name: Extract parsed price
         id: extract
         shell: bash
         run: |
-          field_line="$(grep -m1 -E 'parsed_price:\s*[^ ]' run.log | sed 's/^[[:space:]]*//')"
+          field_line="$(grep -m1 -E 'parsed_price:\s*[^ ]|\[watch_result\]\s*' run.log | sed 's/^[[:space:]]*//')"
           if [[ -z "$field_line" ]]; then
-            echo "No parsed_price field found in output."
-            exit 1
+            field_line="watch_result: no primary result line found"
           fi
 
           parsed_value="$(echo "$field_line" | cut -d':' -f2- | xargs)"
           notification_text="$(grep '^\[item_message\] ' run.log | sed 's/^\[item_message\] //')"
+          if [[ -z "$notification_text" ]]; then
+            notification_text="$(grep '^\[watch_result\] ' run.log | sed 's/^\[watch_result\] //')"
+          fi
           if [[ -z "$notification_text" ]]; then
             notification_text="$field_line"
           fi
@@ -120,7 +147,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           {
-            echo "## Price Watcher Result"
+            echo "## Watcher Result"
             echo ""
             echo "- Field: \`$field_line\`"
             echo "- Parsed value: \`$parsed_value\`"
