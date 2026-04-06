@@ -28,7 +28,7 @@ That means:
 
 - local runs read and write the files in your Koofr-synced folder
 - GitHub Actions downloads those same files from Koofr
-- after a workflow run, the updated `price_memory.json` is uploaded back to Koofr
+- after a workflow run, the updated memory file is uploaded back to Koofr
 
 ## What The Project Does
 
@@ -58,6 +58,10 @@ In `WATCH_MODE=discount`, the script instead:
 
 The GitHub Actions workflow currently defaults to `WATCH_MODE=discount` unless you override it with a repository variable.
 
+The current fridge setup runs in discount mode against:
+
+- `https://www.pricerunner.se/cl/16/Kylfrysar?sort=price_drop`
+
 ## Requirements
 
 You need:
@@ -78,12 +82,11 @@ For local usage you also need:
 If you are starting from scratch, do it in this order:
 
 1. Create the Koofr folder
-2. Put `links.csv` in that folder
-3. Create or discover `site_selectors.json`
-4. Set up Telegram
-5. Add GitHub Secrets
-6. Run the workflow manually once
-7. Let the schedule handle the rest
+2. Put the runtime files for the mode you want in that folder
+3. Set up Telegram
+4. Add GitHub Secrets
+5. Run the workflow manually once
+6. Let the schedule handle the rest
 
 ## 1. Koofr Setup
 
@@ -111,7 +114,16 @@ You will need:
 - your Koofr app-specific password
 - your Koofr folder path, for example `My desktop sync/prices_for_ida`
 
-### Put `links.csv` in the Koofr folder
+### Put the runtime files for your chosen mode in the Koofr folder
+
+For price mode, add:
+
+- `links.csv`
+- `site_selectors.json`
+
+For discount mode, add:
+
+- `discount_watchers.json`
 
 Example content:
 
@@ -121,12 +133,36 @@ Example content:
 
 Notes:
 
-- one or more URLs can be stored in the file
+- one or more URLs can be stored in `links.csv`
 - the script reads every CSV cell and keeps values that start with `http://` or `https://`
 
-### `price_memory.json` does not need to exist yet
+Example `discount_watchers.json`:
 
-The workflow creates `price_memory.json` automatically on the first successful run if the file does not already exist.
+```json
+{
+  "watches": [
+    {
+      "name": "PriceRunner Kylfrysar",
+      "url": "https://www.pricerunner.se/cl/16/Kylfrysar?sort=price_drop",
+      "item_selector": "div.pr-ugbjc3",
+      "discount_selector": "div.pr-nkf7ss",
+      "title_selector": "h2",
+      "title_attr": "title",
+      "min_discount_percent": 40,
+      "max_items": 12
+    }
+  ]
+}
+```
+
+### The memory file does not need to exist yet
+
+The workflow creates the mode-specific memory file automatically on the first successful run if it does not already exist.
+
+That means:
+
+- price mode creates `price_memory.json`
+- discount mode creates `discount_memory.json`
 
 ## 2. Local Python Setup
 
@@ -151,6 +187,8 @@ After that, the scripts will use:
 - `~/Koofr/prices_for_ida/links.csv`
 - `~/Koofr/prices_for_ida/site_selectors.json`
 - `~/Koofr/prices_for_ida/price_memory.json`
+- `~/Koofr/prices_for_ida/discount_watchers.json`
+- `~/Koofr/prices_for_ida/discount_memory.json`
 
 This is the simplest local setup because you do not need to pass file paths manually.
 
@@ -316,6 +354,9 @@ The workflow in [price-watcher.yml](/Users/erikbergman/Documents/Programmering/P
 ```yaml
 on:
   workflow_dispatch:
+    inputs:
+      watch_mode:
+        default: discount
   schedule:
     - cron: "41 20 * * *"
 ```
@@ -335,13 +376,13 @@ Before relying on the schedule:
 1. open `Actions`
 2. open `Price Watcher`
 3. click `Run workflow`
+4. leave `watch_mode=discount` for the fridge watcher unless you intentionally want price mode
 
 This first run confirms:
 
 - GitHub can authenticate to Koofr
-- `links.csv` is found
-- `site_selectors.json` is found
-- `price_memory.json` is created or updated
+- the runtime files for the selected mode are found
+- the correct memory file is created or updated
 - Telegram is configured correctly
 
 ## Local Usage
@@ -368,6 +409,15 @@ Useful discount-mode environment variables:
 - `DISCOUNT_CONFIG_PATH`
 - `DISCOUNT_STATE_PATH`
 - `FETCH_TIMEOUT_SECONDS`
+
+### Current GitHub Actions default
+
+Manual and scheduled workflow runs now default to `WATCH_MODE=discount`.
+
+You can still override this:
+
+- in the GitHub Actions UI with the `watch_mode` input on manual runs
+- with a repository variable `WATCH_MODE=price` if you want to switch the scheduled run back temporarily
 
 ### Override individual paths manually
 
@@ -412,11 +462,17 @@ The workflow in [price-watcher.yml](/Users/erikbergman/Documents/Programmering/P
 2. installs Python dependencies
 3. installs `rclone`
 4. configures a Koofr remote from GitHub Secrets
-5. downloads `links.csv`, `site_selectors.json`, and `price_memory.json` into `runtime_data/`
+5. downloads the runtime files for the selected watch mode into `runtime_data/`
 6. runs [watch_price.py](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/watch_price.py)
-7. uploads the updated `price_memory.json` back to Koofr
+7. uploads the updated mode-specific memory file back to Koofr
 8. extracts the item message from the script output
 9. sends a Telegram message
+
+In discount mode:
+
+- it reads `discount_watchers.json`
+- it writes `discount_memory.json`
+- if `discount_watchers.json` is missing in Koofr, it falls back to the tracked [example.discount_watchers.json](/Users/erikbergman/Documents/Programmering/Pythonprojekt/price_watcher_for_ida/price_watcher_for_ida/data/example.discount_watchers.json)
 
 ## Memory File Format
 
@@ -440,6 +496,21 @@ The watcher uses this file to determine whether an item is:
 - unchanged
 - increased
 - decreased
+
+In discount mode, `discount_memory.json` stores the last alert state for each configured watch.
+
+Example:
+
+```json
+{
+  "PriceRunner Kylfrysar|https://www.pricerunner.se/cl/16/Kylfrysar?sort=price_drop|40": {
+    "alert_key": "48|LG Example",
+    "last_checked": "2026-04-06",
+    "last_message": "PriceRunner Kylfrysar: 1 discounts at or above 40% on 2026-04-06.",
+    "status": "alerting"
+  }
+}
+```
 
 ## Repository Files
 

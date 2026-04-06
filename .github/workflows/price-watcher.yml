@@ -2,6 +2,15 @@ name: Price Watcher
 
 on:
   workflow_dispatch:
+    inputs:
+      watch_mode:
+        description: Watch mode to run
+        required: false
+        default: discount
+        type: choice
+        options:
+          - discount
+          - price
   schedule:
     - cron: "41 20 * * *"
 
@@ -9,7 +18,7 @@ jobs:
   watch-price:
     runs-on: ubuntu-latest
     env:
-      WATCH_MODE: ${{ vars.WATCH_MODE || 'discount' }}
+      WATCH_MODE: ${{ inputs.watch_mode || vars.WATCH_MODE || 'discount' }}
     outputs:
       parsed_price_field: ${{ steps.extract.outputs.parsed_price_field }}
       parsed_price_value: ${{ steps.extract.outputs.parsed_price_value }}
@@ -83,7 +92,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run price watcher
+      - name: Run watcher
         env:
           WATCH_MODE: ${{ env.WATCH_MODE }}
           LINKS_CSV_PATH: runtime_data/links.csv
@@ -93,7 +102,7 @@ jobs:
           DISCOUNT_STATE_PATH: runtime_data/discount_memory.json
         run: python watch_price.py | tee run.log
 
-      - name: Upload price memory to Koofr
+      - name: Upload watcher memory to Koofr
         if: always()
         env:
           KOOFR_PATH: ${{ secrets.KOOFR_PATH }}
@@ -122,7 +131,7 @@ jobs:
             rclone copyto runtime_data/price_memory.json "koofr:${KOOFR_PATH}/price_memory.json"
           fi
 
-      - name: Extract parsed price
+      - name: Extract primary result
         id: extract
         shell: bash
         run: |
