@@ -209,6 +209,22 @@ def test_build_discount_item_message_handles_new_same_and_resolved_alerts() -> N
     )
 
 
+def test_print_discount_watch_results_includes_watch_name(capsys: object) -> None:
+    watch_price.print_discount_watch_results(
+        {
+            "name": "PriceRunner Kylfrysar 30%",
+            "url": "https://example.com/category",
+            "item_selector": ".card",
+            "discount_selector": ".badge",
+            "min_discount_percent": 30,
+        },
+        [],
+    )
+    output = capsys.readouterr().out
+
+    assert "[watch_result] PriceRunner Kylfrysar 30%: 0 discounts at or above 30%" in output
+
+
 def test_build_item_message_covers_new_same_and_changed_states() -> None:
     new_message = watch_price.build_item_message("235 kr", None, "2026-03-15")
     same_message = watch_price.build_item_message(
@@ -348,5 +364,5 @@ def test_main_discount_mode_prints_watch_result_when_fetch_fails(
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "[watch_result] request failed" in output
+    assert "[watch_result] PriceRunner Kylfrysar: request failed" in output
     assert "failed_watches: 1" in output

@@ -466,6 +466,7 @@ def print_discount_watch_results(
     watch: dict[str, object],
     matches: list[DiscountMatch],
 ) -> None:
+    watch_name = str(watch["name"])
     print(f"[watch] {watch['name']}")
     print(f"[url] {watch['url']}")
     print(f"[threshold_percent] {watch['min_discount_percent']}")
@@ -476,7 +477,7 @@ def print_discount_watch_results(
         print(f"- -{match.discount_percent}% | {match.title}")
     print(
         "[watch_result] "
-        f"{len(matches)} discounts at or above {watch['min_discount_percent']}%"
+        f"{watch_name}: {len(matches)} discounts at or above {watch['min_discount_percent']}%"
     )
 
 
@@ -689,7 +690,7 @@ def run_discount_mode() -> int:
             print(f"[watch] {watch['name']}")
             print(f"[url] {url}")
             print(f"[error] {exc}")
-            print("[watch_result] request failed")
+            print(f"[watch_result] {watch['name']}: request failed")
             continue
 
         discount_matches = extract_discount_matches(html_text, watch)
