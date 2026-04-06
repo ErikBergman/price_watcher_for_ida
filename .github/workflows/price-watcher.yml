@@ -1,6 +1,15 @@
 name: Price Watcher
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/price-watcher.yml
+      - watch_price.py
+      - discover_selectors.py
+      - requirements.txt
+      - data/example.discount_watchers.json
   workflow_dispatch:
     inputs:
       watch_mode:
@@ -12,7 +21,7 @@ on:
           - discount
           - price
   schedule:
-    - cron: "41 20 * * *"
+    - cron: "0 19 * * *"
 
 jobs:
   watch-price:

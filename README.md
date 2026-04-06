@@ -353,21 +353,26 @@ The workflow in [price-watcher.yml](/Users/erikbergman/Documents/Programmering/P
 
 ```yaml
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       watch_mode:
         default: discount
   schedule:
-    - cron: "41 20 * * *"
+    - cron: "0 19 * * *"
 ```
 
 GitHub cron uses UTC.
 
 That means the workflow is scheduled for:
 
-- `20:41 UTC`
-- `21:41 CET`
-- `22:41 CEST`
+- `19:00 UTC`
+- `20:00 CET`
+- `21:00 CEST`
+
+As of April 6, 2026, Sweden is on daylight saving time, so the current schedule runs at `21:00` Swedish time.
 
 ## 7. Run It Manually Once
 
@@ -377,6 +382,8 @@ Before relying on the schedule:
 2. open `Price Watcher`
 3. click `Run workflow`
 4. leave `watch_mode=discount` for the fridge watcher unless you intentionally want price mode
+
+The workflow also runs automatically once when you push setup or watcher changes to `main`, and then continues on the daily schedule.
 
 This first run confirms:
 
