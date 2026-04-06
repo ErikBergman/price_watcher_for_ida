@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import time
 import os
 import re
 import sys
@@ -143,11 +144,31 @@ def fetch_html(url: str, timeout_s: int) -> str:
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/123.0.0.0 Safari/537.36"
         ),
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,*/*;q=0.8"
+        ),
         "Accept-Language": "sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Referer": "https://www.pricerunner.se/",
+        "Upgrade-Insecure-Requests": "1",
     }
-    response = requests.get(url, headers=headers, timeout=timeout_s)
-    response.raise_for_status()
-    return response.text
+    last_error: requests.RequestException | None = None
+    for attempt in range(1, 4):
+        try:
+            response = requests.get(url, headers=headers, timeout=timeout_s)
+            response.raise_for_status()
+            return response.text
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt == 3:
+                break
+            time.sleep(attempt)
+
+    raise last_error if last_error is not None else requests.RequestException(
+        "Unknown fetch error"
+    )
 
 
 def load_selector_schema(schema_path: str) -> dict[str, object]:
@@ -668,6 +689,7 @@ def run_discount_mode() -> int:
             print(f"[watch] {watch['name']}")
             print(f"[url] {url}")
             print(f"[error] {exc}")
+            print("[watch_result] request failed")
             continue
 
         discount_matches = extract_discount_matches(html_text, watch)

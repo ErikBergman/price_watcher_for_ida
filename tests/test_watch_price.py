@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import requests
+
 import watch_price
 
 
@@ -308,3 +310,43 @@ def test_main_discount_mode_reads_config_and_updates_state(
     assert exit_code == 0
     assert "PriceRunner Kylfrysar: 1 discounts at or above 40%" in output
     assert saved_state[state_key]["status"] == "alerting"
+
+
+def test_main_discount_mode_prints_watch_result_when_fetch_fails(
+    monkeypatch,
+    tmp_path: Path,
+    capsys: object,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WATCH_MODE", "discount")
+    monkeypatch.delenv(watch_price.DEFAULT_DATA_DIR_ENV, raising=False)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "discount_watchers.json").write_text(
+        json.dumps(
+            {
+                "watches": [
+                    {
+                        "name": "PriceRunner Kylfrysar",
+                        "url": "https://example.com/category",
+                        "item_selector": ".card",
+                        "discount_selector": ".badge",
+                        "min_discount_percent": 40,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        watch_price,
+        "fetch_html",
+        lambda url, timeout_s: (_ for _ in ()).throw(requests.HTTPError("403 Client Error")),
+    )
+
+    exit_code = watch_price.main()
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "[watch_result] request failed" in output
+    assert "failed_watches: 1" in output

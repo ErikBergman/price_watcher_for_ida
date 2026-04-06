@@ -144,15 +144,15 @@ jobs:
         id: extract
         shell: bash
         run: |
-          field_line="$(grep -m1 -E 'parsed_price:\s*[^ ]|\[watch_result\]\s*' run.log | sed 's/^[[:space:]]*//')"
+          field_line="$(grep -m1 -E 'parsed_price:\s*[^ ]|\[watch_result\]\s*' run.log | sed 's/^[[:space:]]*//' || true)"
           if [[ -z "$field_line" ]]; then
             field_line="watch_result: no primary result line found"
           fi
 
           parsed_value="$(echo "$field_line" | cut -d':' -f2- | xargs)"
-          notification_text="$(grep '^\[item_message\] ' run.log | sed 's/^\[item_message\] //')"
+          notification_text="$(grep '^\[item_message\] ' run.log | sed 's/^\[item_message\] //' || true)"
           if [[ -z "$notification_text" ]]; then
-            notification_text="$(grep '^\[watch_result\] ' run.log | sed 's/^\[watch_result\] //')"
+            notification_text="$(grep '^\[watch_result\] ' run.log | sed 's/^\[watch_result\] //' || true)"
           fi
           if [[ -z "$notification_text" ]]; then
             notification_text="$field_line"
