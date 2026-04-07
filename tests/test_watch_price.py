@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -270,6 +271,21 @@ def test_build_new_discount_product_lines_only_includes_unseen_matches(monkeypat
     assert lines == [
         "Product 1: Current price 15 990 kr, historical low 15 990 kr, average price 28 081 kr"
     ]
+
+
+def test_compute_time_weighted_average_price_weights_by_duration() -> None:
+    history = [
+        {"timestamp": "2026-01-01T00:00:00+00:00", "price": 100.0},
+        {"timestamp": "2026-01-02T00:00:00+00:00", "price": 200.0},
+        {"timestamp": "2026-01-04T00:00:00+00:00", "price": 300.0},
+    ]
+
+    average_price = watch_price.compute_time_weighted_average_price(
+        history,
+        end_time=datetime(2026, 1, 5, tzinfo=timezone.utc),
+    )
+
+    assert average_price == 200.0
 
 
 def test_print_discount_watch_results_includes_watch_name(capsys: object) -> None:

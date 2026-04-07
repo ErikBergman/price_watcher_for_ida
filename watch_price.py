@@ -7,7 +7,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -564,6 +564,55 @@ def format_money_amount(
     return f"{number_text} {normalized_currency}"
 
 
+def compute_time_weighted_average_price(
+    history: list[dict[str, object]],
+    *,
+    end_time: datetime | None = None,
+) -> float | None:
+    points: list[tuple[datetime, float]] = []
+    for point in history:
+        if not isinstance(point, dict):
+            continue
+        timestamp = point.get("timestamp")
+        price = point.get("price")
+        if not isinstance(timestamp, str) or not isinstance(price, (int, float)):
+            continue
+        try:
+            parsed_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        points.append((parsed_time, float(price)))
+
+    if not points:
+        return None
+    if len(points) == 1:
+        return points[0][1]
+
+    points.sort(key=lambda entry: entry[0])
+    final_time = end_time
+    if final_time is None:
+        final_time = datetime.now(points[-1][0].tzinfo)
+    if final_time < points[-1][0]:
+        final_time = points[-1][0]
+
+    weighted_sum = 0.0
+    total_seconds = 0.0
+    for index, (start_time, price) in enumerate(points):
+        if index + 1 < len(points):
+            end = points[index + 1][0]
+        else:
+            end = final_time
+        duration_seconds = max((end - start_time).total_seconds(), 0.0)
+        if duration_seconds == 0:
+            continue
+        weighted_sum += price * duration_seconds
+        total_seconds += duration_seconds
+
+    if total_seconds == 0:
+        return points[-1][1]
+    return weighted_sum / total_seconds
+
+
 def fetch_discount_price_summary(product_url: str, timeout_s: int) -> dict[str, str] | None:
     product_id = infer_product_id_from_url(product_url)
     country_code = infer_country_code_from_url(product_url)
@@ -630,7 +679,9 @@ def fetch_discount_price_summary(product_url: str, timeout_s: int) -> dict[str, 
     historical_low = payload.get("lowest")
     if not isinstance(historical_low, (int, float)):
         historical_low = min(prices)
-    average_price = sum(prices) / len(prices)
+    average_price = compute_time_weighted_average_price(history)
+    if average_price is None:
+        average_price = sum(prices) / len(prices)
     currency_code = str(payload.get("currencyCode") or "SEK")
     return {
         "current_price": format_money_amount(current_price, currency_code),
