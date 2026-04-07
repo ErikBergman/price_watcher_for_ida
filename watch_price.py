@@ -699,29 +699,16 @@ def fetch_discount_price_summary(product_url: str, timeout_s: int) -> dict[str, 
     }
 
 
-def build_discount_product_table(rows: list[dict[str, str]]) -> str:
-    headers = [
-        ("id", "#id"),
-        ("discount_percent", "Price drop %"),
-        ("current_price", "Current price"),
-        ("average_price", "Average price"),
-        ("historical_low", "Historical lowest price"),
-    ]
-    widths = {
-        key: max(len(label), *(len(row[key]) for row in rows))
-        for key, label in headers
-    }
-
-    def render_row(row: dict[str, str]) -> str:
-        return " | ".join(
-            row[key].ljust(widths[key])
-            for key, _ in headers
+def build_discount_product_lines(rows: list[dict[str, str]]) -> list[str]:
+    return [
+        (
+            f"#{row['id']}: {row['discount_percent']}, "
+            f"current {row['current_price']}, "
+            f"avg {row['average_price']}, "
+            f"low {row['historical_low']}"
         )
-
-    header_row = render_row({key: label for key, label in headers})
-    divider_row = "-+-".join("-" * widths[key] for key, _ in headers)
-    body_rows = [render_row(row) for row in rows]
-    return "\n".join([header_row, divider_row, *body_rows])
+        for row in rows
+    ]
 
 
 def build_new_discount_product_rows(
@@ -786,9 +773,10 @@ def build_discount_item_message(
         )
     ]
     if new_product_rows:
-        lines.append("<pre>")
-        lines.append(html.escape(build_discount_product_table(new_product_rows)))
-        lines.append("</pre>")
+        lines.extend(
+            html.escape(line)
+            for line in build_discount_product_lines(new_product_rows)
+        )
     return "\n".join(lines)
 
 
