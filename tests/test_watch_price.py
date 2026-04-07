@@ -209,6 +209,21 @@ def test_extract_product_brand_reads_marke_value() -> None:
     assert watch_price.extract_product_brand(html) == "Apple"
 
 
+def test_extract_product_brand_falls_back_to_embedded_brand_name() -> None:
+    html = """
+    <script>
+      window.__DATA__ = {
+        "product": {
+          "brandName": "LG",
+          "brand": {"id": "30", "name": "LG"}
+        }
+      };
+    </script>
+    """
+
+    assert watch_price.extract_product_brand(html) == "LG"
+
+
 def test_build_discount_item_message_handles_new_same_and_resolved_alerts() -> None:
     watch = {
         "name": "PriceRunner Kylfrysar",

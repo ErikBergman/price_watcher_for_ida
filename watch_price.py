@@ -59,6 +59,8 @@ DEFAULT_SELECTOR_SCHEMA = {
 
 DEFAULT_DISCOUNT_CONFIG = {"watches": []}
 PRODUCT_ID_RE = re.compile(r"/pl/\d+-(\d+)(?:/|$)")
+BRAND_NAME_RE = re.compile(r'"brandName"\s*:\s*"([^"]+)"')
+BRAND_OBJECT_NAME_RE = re.compile(r'"brand"\s*:\s*\{.*?"name"\s*:\s*"([^"]+)"', re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -633,6 +635,18 @@ def extract_product_brand(html_text: str) -> str | None:
             if brand:
                 return brand
         brand = clean_text(value_cell.get_text(" ", strip=True))
+        if brand:
+            return brand
+
+    embedded_match = BRAND_NAME_RE.search(html_text)
+    if embedded_match is not None:
+        brand = clean_text(embedded_match.group(1))
+        if brand:
+            return brand
+
+    embedded_brand_object = BRAND_OBJECT_NAME_RE.search(html_text)
+    if embedded_brand_object is not None:
+        brand = clean_text(embedded_brand_object.group(1))
         if brand:
             return brand
     return None
