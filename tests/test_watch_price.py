@@ -188,6 +188,27 @@ def test_extract_discount_matches_filters_by_threshold() -> None:
     ]
 
 
+def test_extract_product_brand_reads_marke_value() -> None:
+    html = """
+    <table>
+      <tr>
+        <td class="pr-1qyndaa-TableCell-root" data-kind="descriptive">
+          <span class="ztUOKgqeBM">
+            <span class="MoE6eKP0n7 pr-1g476jh" data-state="closed">Märke</span>
+          </span>
+        </td>
+        <td class="pr-1o2xdvn-TableCell-root">
+          <span class="pr-q6eqma">
+            <a class="pr-1fz9gq1" title="Apple" href="/mi/162/Apple">Apple</a>
+          </span>
+        </td>
+      </tr>
+    </table>
+    """
+
+    assert watch_price.extract_product_brand(html) == "Apple"
+
+
 def test_build_discount_item_message_handles_new_same_and_resolved_alerts() -> None:
     watch = {
         "name": "PriceRunner Kylfrysar",
@@ -213,6 +234,7 @@ def test_build_discount_item_message_handles_new_same_and_resolved_alerts() -> N
         [
             {
                 "id": "1",
+                "brand": "Apple",
                 "discount_percent": "-48%",
                 "current_price": "1 000 kr",
                 "average_price": "950 kr",
@@ -243,6 +265,7 @@ def test_build_discount_item_message_handles_new_same_and_resolved_alerts() -> N
     )
     assert "<pre>" not in (new_message or "")
     assert "<b>#1</b> <code>-48%</code>" in (new_message or "")
+    assert "Brand: <code>Apple</code>" in (new_message or "")
     assert "Current: <code>1 000 kr</code>" in (new_message or "")
     assert "Average: <code>950 kr</code>" in (new_message or "")
     assert "Low: <code>900 kr</code>" in (new_message or "")
@@ -273,6 +296,7 @@ def test_build_new_discount_product_rows_only_includes_unseen_matches(monkeypatc
         watch_price,
         "fetch_discount_price_summary",
         lambda product_url, timeout_s: {
+            "brand": "Apple",
             "current_price": "15 990 kr",
             "historical_low": "15 990 kr",
             "average_price": "28 081 kr",
@@ -284,6 +308,7 @@ def test_build_new_discount_product_rows_only_includes_unseen_matches(monkeypatc
     assert rows == [
         {
             "id": "1",
+            "brand": "Apple",
             "discount_percent": "-44%",
             "current_price": "15 990 kr",
             "average_price": "28 081 kr",
@@ -419,6 +444,7 @@ def test_main_discount_mode_reads_config_and_updates_state(
         watch_price,
         "fetch_discount_price_summary",
         lambda product_url, timeout_s: {
+            "brand": "LG",
             "current_price": "15 990 kr",
             "historical_low": "15 990 kr",
             "average_price": "28 081 kr",
@@ -436,6 +462,7 @@ def test_main_discount_mode_reads_config_and_updates_state(
     assert "<b>PriceRunner Kylfrysar</b>" in output
     assert "1 discounts at or above <code>40%</code> on " in output
     assert "<b>#1</b> <code>-48%</code>" in output
+    assert "Brand: <code>LG</code>" in output
     assert "Current: <code>15 990 kr</code>" in output
     assert "Average: <code>28 081 kr</code>" in output
     assert "Low: <code>15 990 kr</code>" in output

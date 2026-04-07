@@ -618,6 +618,26 @@ def compute_time_weighted_average_price(
     return weighted_sum / total_seconds
 
 
+def extract_product_brand(html_text: str) -> str | None:
+    soup = BeautifulSoup(html_text, "html.parser")
+    for label_cell in soup.select('td[data-kind="descriptive"]'):
+        label_text = clean_text(label_cell.get_text(" ", strip=True))
+        if label_text.lower() not in {"märke", "brand"}:
+            continue
+        value_cell = label_cell.find_next_sibling("td")
+        if value_cell is None:
+            continue
+        value_link = value_cell.find("a")
+        if value_link is not None:
+            brand = clean_text(value_link.get_text(" ", strip=True))
+            if brand:
+                return brand
+        brand = clean_text(value_cell.get_text(" ", strip=True))
+        if brand:
+            return brand
+    return None
+
+
 def fetch_discount_price_summary(product_url: str, timeout_s: int) -> dict[str, str] | None:
     product_id = infer_product_id_from_url(product_url)
     country_code = infer_country_code_from_url(product_url)
@@ -688,7 +708,14 @@ def fetch_discount_price_summary(product_url: str, timeout_s: int) -> dict[str, 
     if average_price is None:
         average_price = sum(prices) / len(prices)
     currency_code = str(payload.get("currencyCode") or "SEK")
+    brand = "Unknown"
+    try:
+        brand_html = fetch_html(product_url, timeout_s)
+        brand = extract_product_brand(brand_html) or brand
+    except requests.RequestException as exc:
+        print(f"[history_summary_error] {product_url} :: brand lookup failed: {exc}")
     return {
+        "brand": brand,
         "current_price": format_money_amount(current_price, currency_code),
         "historical_low": format_money_amount(float(historical_low), currency_code),
         "average_price": format_money_amount(
@@ -710,6 +737,7 @@ def build_discount_product_lines(rows: list[dict[str, str]]) -> list[str]:
                     f"<b>#{html.escape(row['id'])}</b> "
                     f"<code>{html.escape(row['discount_percent'])}</code>"
                 ),
+                f"Brand: <code>{html.escape(row['brand'])}</code>",
                 f"Current: <code>{html.escape(row['current_price'])}</code>",
                 f"Average: <code>{html.escape(row['average_price'])}</code>",
                 f"Low: <code>{html.escape(row['historical_low'])}</code>",
@@ -741,6 +769,7 @@ def build_new_discount_product_rows(
         rows.append(
             {
                 "id": str(product_index),
+                "brand": summary["brand"],
                 "discount_percent": format_discount_percent(match.discount_percent),
                 "current_price": summary["current_price"],
                 "average_price": summary["average_price"],
