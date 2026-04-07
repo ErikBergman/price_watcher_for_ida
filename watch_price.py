@@ -9,7 +9,7 @@ import sys
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -57,12 +57,14 @@ DEFAULT_SELECTOR_SCHEMA = {
 
 
 DEFAULT_DISCOUNT_CONFIG = {"watches": []}
+PRODUCT_ID_RE = re.compile(r"/pl/\d+-(\d+)(?:/|$)")
 
 
 @dataclass(frozen=True)
 class DiscountMatch:
     title: str
     discount_percent: int
+    product_url: str | None = None
 
 
 def default_data_path(filename: str) -> str:
@@ -122,6 +124,26 @@ def parse_discount_percent(value: str) -> int | None:
     if match is None:
         return None
     return int(match.group(1))
+
+
+def infer_country_code_from_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+    parts = hostname.split(".")
+    tld = parts[-1] if parts else ""
+    if len(tld) == 2 and tld.isalpha():
+        return tld.upper()
+
+    first_segment = parsed.path.strip("/").split("/", 1)[0]
+    if len(first_segment) == 2 and first_segment.isalpha():
+        return first_segment.upper()
+
+    return None
+
+
+def infer_product_id_from_url(url: str) -> str | None:
+    match = PRODUCT_ID_RE.search(urlparse(url).path)
+    return match.group(1) if match else None
 
 
 def coerce_positive_int(value: object) -> int | None:
@@ -407,6 +429,22 @@ def derive_discount_title(
     return text
 
 
+def derive_discount_product_url(item_node: Tag, watch_url: str) -> str | None:
+    parent_anchor = item_node.find_parent("a", href=True)
+    if parent_anchor is not None:
+        href = parent_anchor.get("href")
+        if isinstance(href, str) and href.strip():
+            return urljoin(watch_url, href.strip())
+
+    direct_anchor = item_node.select_one("a[href]")
+    if direct_anchor is not None:
+        href = direct_anchor.get("href")
+        if isinstance(href, str) and href.strip():
+            return urljoin(watch_url, href.strip())
+
+    return None
+
+
 def build_discount_alert_key(matches: list[DiscountMatch]) -> str:
     return "\n".join(
         f"{match.discount_percent}|{match.title}"
@@ -421,6 +459,20 @@ def build_discount_state_key(watch: dict[str, object]) -> str:
     return f"{name}|{url}|{threshold}"
 
 
+def build_discount_match_state_key(match: DiscountMatch) -> str:
+    return match.product_url or match.title
+
+
+def build_discount_match_state_value(matches: list[DiscountMatch]) -> str:
+    return "\n".join(build_discount_match_state_key(match) for match in matches)
+
+
+def parse_discount_match_state_value(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    return {line for line in value.splitlines() if line}
+
+
 def extract_discount_matches(
     html_text: str,
     watch: dict[str, object],
@@ -432,6 +484,7 @@ def extract_discount_matches(
     title_selector = watch.get("title_selector")
     title_attr = watch.get("title_attr")
     max_items = watch.get("max_items")
+    watch_url = str(watch["url"])
 
     matches: list[DiscountMatch] = []
     seen: set[tuple[int, str]] = set()
@@ -450,11 +503,18 @@ def extract_discount_matches(
             title_attr if isinstance(title_attr, str) else None,
             discount_text,
         )
+        product_url = derive_discount_product_url(item_node, watch_url)
         key = (discount_percent, title)
         if key in seen:
             continue
         seen.add(key)
-        matches.append(DiscountMatch(title=title, discount_percent=discount_percent))
+        matches.append(
+            DiscountMatch(
+                title=title,
+                discount_percent=discount_percent,
+                product_url=product_url,
+            )
+        )
 
         if isinstance(max_items, int) and len(matches) >= max_items:
             break
@@ -481,11 +541,124 @@ def print_discount_watch_results(
     )
 
 
+def format_money_amount(
+    amount: float | None,
+    currency_code: str,
+    *,
+    round_to_whole: bool = False,
+) -> str:
+    if amount is None:
+        return "unknown"
+
+    normalized_currency = currency_code.upper()
+    if round_to_whole:
+        amount = float(round(amount))
+    rounded = round(amount)
+    if abs(amount - rounded) < 0.005:
+        number_text = f"{rounded:,}".replace(",", " ")
+    else:
+        number_text = f"{amount:,.2f}".replace(",", " ").replace(".", ",")
+
+    if normalized_currency == "SEK":
+        return f"{number_text} kr"
+    return f"{number_text} {normalized_currency}"
+
+
+def fetch_discount_price_summary(product_url: str, timeout_s: int) -> dict[str, str] | None:
+    product_id = infer_product_id_from_url(product_url)
+    country_code = infer_country_code_from_url(product_url)
+    if product_id is None or country_code is None:
+        return None
+
+    api_url = (
+        f"https://www.pricerunner.se/{country_code.lower()}/api/"
+        f"product-information-edge-rest/public/pricehistory/product/"
+        f"{product_id}/{country_code}/DAY"
+    )
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/123.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json,text/plain,*/*",
+        "Accept-Language": "sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Referer": "https://www.pricerunner.se/",
+    }
+    response = requests.get(
+        api_url,
+        headers=headers,
+        params={"selectedInterval": "INFINITE_DAYS", "filter": "NATIONAL"},
+        timeout=timeout_s,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    history = payload.get("history")
+    if not isinstance(history, list) or not history:
+        return None
+
+    prices = [
+        float(point["price"])
+        for point in history
+        if isinstance(point, dict) and isinstance(point.get("price"), (int, float))
+    ]
+    if not prices:
+        return None
+
+    current_price = prices[-1]
+    historical_low = payload.get("lowest")
+    if not isinstance(historical_low, (int, float)):
+        historical_low = min(prices)
+    average_price = sum(prices) / len(prices)
+    currency_code = str(payload.get("currencyCode") or "SEK")
+    return {
+        "current_price": format_money_amount(current_price, currency_code),
+        "historical_low": format_money_amount(float(historical_low), currency_code),
+        "average_price": format_money_amount(
+            average_price,
+            currency_code,
+            round_to_whole=True,
+        ),
+    }
+
+
+def build_new_discount_product_lines(
+    matches: list[DiscountMatch],
+    previous_entry: dict[str, str] | None,
+    timeout_s: int,
+) -> list[str]:
+    previous_keys = parse_discount_match_state_value(
+        previous_entry.get("match_state") if previous_entry else None
+    )
+    lines: list[str] = []
+    for match in matches:
+        match_key = build_discount_match_state_key(match)
+        if match_key in previous_keys or not match.product_url:
+            continue
+        try:
+            summary = fetch_discount_price_summary(match.product_url, timeout_s)
+        except requests.RequestException:
+            continue
+        if summary is None:
+            continue
+        product_index = len(lines) + 1
+        lines.append(
+            "Product "
+            f"{product_index}: Current price {summary['current_price']}, "
+            f"historical low {summary['historical_low']}, "
+            f"average price {summary['average_price']}"
+        )
+    return lines
+
+
 def build_discount_item_message(
     watch: dict[str, object],
     matches: list[DiscountMatch],
     previous_entry: dict[str, str] | None,
     today_iso: str,
+    new_product_lines: list[str] | None = None,
 ) -> str | None:
     threshold = int(watch["min_discount_percent"])
     previous_status = previous_entry.get("status") if previous_entry else None
@@ -509,6 +682,8 @@ def build_discount_item_message(
             f"{threshold}% on {today_iso}."
         )
     ]
+    for product_line in new_product_lines or []:
+        lines.append(f"- {product_line}")
     for match in matches[:5]:
         lines.append(f"- -{match.discount_percent}% {match.title}")
     if len(matches) > 5:
@@ -698,11 +873,17 @@ def run_discount_mode() -> int:
         if discount_matches:
             matches += 1
 
+        new_product_lines = build_new_discount_product_lines(
+            discount_matches,
+            previous_entry,
+            timeout_s,
+        )
         message = build_discount_item_message(
             watch,
             discount_matches,
             previous_entry,
             today_iso,
+            new_product_lines,
         )
         if message:
             print(f"[item_message] {message}")
@@ -712,6 +893,7 @@ def run_discount_mode() -> int:
             "alert_key": build_discount_alert_key(discount_matches),
             "last_checked": today_iso,
             "last_message": message or "",
+            "match_state": build_discount_match_state_value(discount_matches),
             "status": "alerting" if discount_matches else "clear",
         }
 

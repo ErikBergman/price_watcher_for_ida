@@ -149,14 +149,18 @@ def test_extract_discount_matches_filters_by_threshold() -> None:
     html = """
     <html>
       <body>
-        <div class="card">
-          <div class="badge">-48%</div>
-          <h2 title="LG Combo">LG Combo</h2>
-        </div>
-        <div class="card">
-          <div class="badge">-39%</div>
-          <h2 title="Samsung Combo">Samsung Combo</h2>
-        </div>
+        <a href="/pl/16-123/Kylfrysar/LG-Combo-priser">
+          <div class="card">
+            <div class="badge">-48%</div>
+            <h2 title="LG Combo">LG Combo</h2>
+          </div>
+        </a>
+        <a href="/pl/16-456/Kylfrysar/Samsung-Combo-priser">
+          <div class="card">
+            <div class="badge">-39%</div>
+            <h2 title="Samsung Combo">Samsung Combo</h2>
+          </div>
+        </a>
       </body>
     </html>
     """
@@ -174,7 +178,13 @@ def test_extract_discount_matches_filters_by_threshold() -> None:
         },
     )
 
-    assert matches == [watch_price.DiscountMatch(title="LG Combo", discount_percent=48)]
+    assert matches == [
+        watch_price.DiscountMatch(
+            title="LG Combo",
+            discount_percent=48,
+            product_url="https://example.com/pl/16-123/Kylfrysar/LG-Combo-priser",
+        )
+    ]
 
 
 def test_build_discount_item_message_handles_new_same_and_resolved_alerts() -> None:
@@ -185,14 +195,30 @@ def test_build_discount_item_message_handles_new_same_and_resolved_alerts() -> N
         "discount_selector": ".badge",
         "min_discount_percent": 40,
     }
-    matches = [watch_price.DiscountMatch(title="LG Combo", discount_percent=48)]
+    matches = [
+        watch_price.DiscountMatch(
+            title="LG Combo",
+            discount_percent=48,
+            product_url="https://example.com/pl/16-123/Kylfrysar/LG-Combo-priser",
+        )
+    ]
     alert_key = watch_price.build_discount_alert_key(matches)
 
-    new_message = watch_price.build_discount_item_message(watch, matches, None, "2026-04-05")
+    new_message = watch_price.build_discount_item_message(
+        watch,
+        matches,
+        None,
+        "2026-04-05",
+        ["Product 1: Current price 1 000 kr, historical low 900 kr, average price 950 kr"],
+    )
     same_message = watch_price.build_discount_item_message(
         watch,
         matches,
-        {"status": "alerting", "alert_key": alert_key},
+        {
+            "status": "alerting",
+            "alert_key": alert_key,
+            "match_state": "https://example.com/pl/16-123/Kylfrysar/LG-Combo-priser",
+        },
         "2026-04-05",
     )
     resolved_message = watch_price.build_discount_item_message(
@@ -203,10 +229,47 @@ def test_build_discount_item_message_handles_new_same_and_resolved_alerts() -> N
     )
 
     assert "1 discounts at or above 40%" in (new_message or "")
+    assert "Product 1: Current price 1 000 kr, historical low 900 kr, average price 950 kr" in (
+        new_message or ""
+    )
     assert same_message is None
     assert resolved_message == (
         "On 2026-04-05, PriceRunner Kylfrysar no longer has discounts at or above 40%."
     )
+
+
+def test_build_new_discount_product_lines_only_includes_unseen_matches(monkeypatch) -> None:
+    matches = [
+        watch_price.DiscountMatch(
+            title="Seen product",
+            discount_percent=45,
+            product_url="https://example.com/pl/16-123/Kylfrysar/Seen-product-priser",
+        ),
+        watch_price.DiscountMatch(
+            title="New product",
+            discount_percent=44,
+            product_url="https://example.com/pl/16-456/Kylfrysar/New-product-priser",
+        ),
+    ]
+    previous_entry = {
+        "match_state": "https://example.com/pl/16-123/Kylfrysar/Seen-product-priser"
+    }
+
+    monkeypatch.setattr(
+        watch_price,
+        "fetch_discount_price_summary",
+        lambda product_url, timeout_s: {
+            "current_price": "15 990 kr",
+            "historical_low": "15 990 kr",
+            "average_price": "28 081 kr",
+        },
+    )
+
+    lines = watch_price.build_new_discount_product_lines(matches, previous_entry, 20)
+
+    assert lines == [
+        "Product 1: Current price 15 990 kr, historical low 15 990 kr, average price 28 081 kr"
+    ]
 
 
 def test_print_discount_watch_results_includes_watch_name(capsys: object) -> None:
@@ -311,9 +374,20 @@ def test_main_discount_mode_reads_config_and_updates_state(
         "fetch_html",
         lambda url, timeout_s: (
             "<html><body>"
+            '<a href="/pl/16-123/Kylfrysar/LG-Combo-priser">'
             '<div class="card"><div class="badge">-48%</div><h2 title="LG Combo">LG Combo</h2></div>'
+            "</a>"
             "</body></html>"
         ),
+    )
+    monkeypatch.setattr(
+        watch_price,
+        "fetch_discount_price_summary",
+        lambda product_url, timeout_s: {
+            "current_price": "15 990 kr",
+            "historical_low": "15 990 kr",
+            "average_price": "28 081 kr",
+        },
     )
 
     exit_code = watch_price.main()
@@ -325,6 +399,8 @@ def test_main_discount_mode_reads_config_and_updates_state(
     )
     assert exit_code == 0
     assert "PriceRunner Kylfrysar: 1 discounts at or above 40%" in output
+    assert "Product 1: Current price 15 990 kr, historical low 15 990 kr, average price 28 081 kr" in output
+    assert saved_state[state_key]["match_state"] == "https://example.com/pl/16-123/Kylfrysar/LG-Combo-priser"
     assert saved_state[state_key]["status"] == "alerting"
 
 
