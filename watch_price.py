@@ -587,16 +587,34 @@ def fetch_discount_price_summary(product_url: str, timeout_s: int) -> dict[str, 
         "Pragma": "no-cache",
         "Referer": "https://www.pricerunner.se/",
     }
-    response = requests.get(
-        api_url,
-        headers=headers,
-        params={"selectedInterval": "INFINITE_DAYS", "filter": "NATIONAL"},
-        timeout=timeout_s,
-    )
-    response.raise_for_status()
+    last_error: requests.RequestException | None = None
+    response: requests.Response | None = None
+    for attempt in range(1, 4):
+        try:
+            response = requests.get(
+                api_url,
+                headers=headers,
+                params={"selectedInterval": "INFINITE_DAYS", "filter": "NATIONAL"},
+                timeout=timeout_s,
+            )
+            response.raise_for_status()
+            break
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt == 3:
+                print(f"[history_summary_error] {product_url} :: {exc}")
+                return None
+            time.sleep(attempt)
+
+    if response is None:
+        if last_error is not None:
+            print(f"[history_summary_error] {product_url} :: {last_error}")
+        return None
+
     payload = response.json()
     history = payload.get("history")
     if not isinstance(history, list) or not history:
+        print(f"[history_summary_error] {product_url} :: empty history payload")
         return None
 
     prices = [
@@ -605,6 +623,7 @@ def fetch_discount_price_summary(product_url: str, timeout_s: int) -> dict[str, 
         if isinstance(point, dict) and isinstance(point.get("price"), (int, float))
     ]
     if not prices:
+        print(f"[history_summary_error] {product_url} :: no numeric prices in history payload")
         return None
 
     current_price = prices[-1]
@@ -716,6 +735,11 @@ def build_item_message(
     )
 
 
+def print_tagged_message(tag: str, message: str) -> None:
+    for line in message.splitlines():
+        print(f"[{tag}] {line}")
+
+
 def print_selector_results(
     url: str,
     html_text: str,
@@ -810,7 +834,7 @@ def run_price_mode() -> int:
         if price:
             matches += 1
             message = build_item_message(price, state.get(url), today_iso)
-            print(f"[item_message] {message}")
+            print_tagged_message("item_message", message)
             item_messages.append(message)
             updated_state[url] = {
                 "last_checked": today_iso,
@@ -886,7 +910,7 @@ def run_discount_mode() -> int:
             new_product_lines,
         )
         if message:
-            print(f"[item_message] {message}")
+            print_tagged_message("item_message", message)
             item_messages.append(message)
 
         updated_state[state_key] = {
