@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import html
 import json
 import time
 import os
@@ -564,6 +565,10 @@ def format_money_amount(
     return f"{number_text} {normalized_currency}"
 
 
+def format_discount_percent(discount_percent: int) -> str:
+    return f"-{discount_percent}%"
+
+
 def compute_time_weighted_average_price(
     history: list[dict[str, object]],
     *,
@@ -694,15 +699,40 @@ def fetch_discount_price_summary(product_url: str, timeout_s: int) -> dict[str, 
     }
 
 
-def build_new_discount_product_lines(
+def build_discount_product_table(rows: list[dict[str, str]]) -> str:
+    headers = [
+        ("id", "#id"),
+        ("discount_percent", "Price drop %"),
+        ("current_price", "Current price"),
+        ("average_price", "Average price"),
+        ("historical_low", "Historical lowest price"),
+    ]
+    widths = {
+        key: max(len(label), *(len(row[key]) for row in rows))
+        for key, label in headers
+    }
+
+    def render_row(row: dict[str, str]) -> str:
+        return " | ".join(
+            row[key].ljust(widths[key])
+            for key, _ in headers
+        )
+
+    header_row = render_row({key: label for key, label in headers})
+    divider_row = "-+-".join("-" * widths[key] for key, _ in headers)
+    body_rows = [render_row(row) for row in rows]
+    return "\n".join([header_row, divider_row, *body_rows])
+
+
+def build_new_discount_product_rows(
     matches: list[DiscountMatch],
     previous_entry: dict[str, str] | None,
     timeout_s: int,
-) -> list[str]:
+) -> list[dict[str, str]]:
     previous_keys = parse_discount_match_state_value(
         previous_entry.get("match_state") if previous_entry else None
     )
-    lines: list[str] = []
+    rows: list[dict[str, str]] = []
     for match in matches:
         match_key = build_discount_match_state_key(match)
         if match_key in previous_keys or not match.product_url:
@@ -713,14 +743,17 @@ def build_new_discount_product_lines(
             continue
         if summary is None:
             continue
-        product_index = len(lines) + 1
-        lines.append(
-            "Product "
-            f"{product_index}: Current price {summary['current_price']}, "
-            f"historical low {summary['historical_low']}, "
-            f"average price {summary['average_price']}"
+        product_index = len(rows) + 1
+        rows.append(
+            {
+                "id": str(product_index),
+                "discount_percent": format_discount_percent(match.discount_percent),
+                "current_price": summary["current_price"],
+                "average_price": summary["average_price"],
+                "historical_low": summary["historical_low"],
+            }
         )
-    return lines
+    return rows
 
 
 def build_discount_item_message(
@@ -728,7 +761,7 @@ def build_discount_item_message(
     matches: list[DiscountMatch],
     previous_entry: dict[str, str] | None,
     today_iso: str,
-    new_product_lines: list[str] | None = None,
+    new_product_rows: list[dict[str, str]] | None = None,
 ) -> str | None:
     threshold = int(watch["min_discount_percent"])
     previous_status = previous_entry.get("status") if previous_entry else None
@@ -748,16 +781,14 @@ def build_discount_item_message(
 
     lines = [
         (
-            f"{watch['name']}: {len(matches)} discounts at or above "
-            f"{threshold}% on {today_iso}."
+            f"<b>{html.escape(str(watch['name']))}</b>: "
+            f"{len(matches)} discounts at or above {threshold}% on {today_iso}."
         )
     ]
-    for product_line in new_product_lines or []:
-        lines.append(f"- {product_line}")
-    for match in matches[:5]:
-        lines.append(f"- -{match.discount_percent}% {match.title}")
-    if len(matches) > 5:
-        lines.append(f"- Plus {len(matches) - 5} more matches.")
+    if new_product_rows:
+        lines.append("<pre>")
+        lines.append(html.escape(build_discount_product_table(new_product_rows)))
+        lines.append("</pre>")
     return "\n".join(lines)
 
 
@@ -948,7 +979,7 @@ def run_discount_mode() -> int:
         if discount_matches:
             matches += 1
 
-        new_product_lines = build_new_discount_product_lines(
+        new_product_rows = build_new_discount_product_rows(
             discount_matches,
             previous_entry,
             timeout_s,
@@ -958,7 +989,7 @@ def run_discount_mode() -> int:
             discount_matches,
             previous_entry,
             today_iso,
-            new_product_lines,
+            new_product_rows,
         )
         if message:
             print_tagged_message("item_message", message)

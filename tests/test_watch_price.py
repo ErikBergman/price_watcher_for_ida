@@ -210,7 +210,15 @@ def test_build_discount_item_message_handles_new_same_and_resolved_alerts() -> N
         matches,
         None,
         "2026-04-05",
-        ["Product 1: Current price 1 000 kr, historical low 900 kr, average price 950 kr"],
+        [
+            {
+                "id": "1",
+                "discount_percent": "-48%",
+                "current_price": "1 000 kr",
+                "average_price": "950 kr",
+                "historical_low": "900 kr",
+            }
+        ],
     )
     same_message = watch_price.build_discount_item_message(
         watch,
@@ -229,17 +237,22 @@ def test_build_discount_item_message_handles_new_same_and_resolved_alerts() -> N
         "2026-04-05",
     )
 
-    assert "1 discounts at or above 40%" in (new_message or "")
-    assert "Product 1: Current price 1 000 kr, historical low 900 kr, average price 950 kr" in (
+    assert "<b>PriceRunner Kylfrysar</b>: 1 discounts at or above 40% on 2026-04-05." in (
         new_message or ""
     )
+    assert "<pre>" in (new_message or "")
+    assert "#id" in (new_message or "")
+    assert "Price drop %" in (new_message or "")
+    assert "Current price" in (new_message or "")
+    assert "Historical lowest price" in (new_message or "")
+    assert "-48%" in (new_message or "")
     assert same_message is None
     assert resolved_message == (
         "On 2026-04-05, PriceRunner Kylfrysar no longer has discounts at or above 40%."
     )
 
 
-def test_build_new_discount_product_lines_only_includes_unseen_matches(monkeypatch) -> None:
+def test_build_new_discount_product_rows_only_includes_unseen_matches(monkeypatch) -> None:
     matches = [
         watch_price.DiscountMatch(
             title="Seen product",
@@ -266,10 +279,16 @@ def test_build_new_discount_product_lines_only_includes_unseen_matches(monkeypat
         },
     )
 
-    lines = watch_price.build_new_discount_product_lines(matches, previous_entry, 20)
+    rows = watch_price.build_new_discount_product_rows(matches, previous_entry, 20)
 
-    assert lines == [
-        "Product 1: Current price 15 990 kr, historical low 15 990 kr, average price 28 081 kr"
+    assert rows == [
+        {
+            "id": "1",
+            "discount_percent": "-44%",
+            "current_price": "15 990 kr",
+            "average_price": "28 081 kr",
+            "historical_low": "15 990 kr",
+        }
     ]
 
 
@@ -414,8 +433,11 @@ def test_main_discount_mode_reads_config_and_updates_state(
         "PriceRunner Kylfrysar|https://example.com/category|40"
     )
     assert exit_code == 0
-    assert "PriceRunner Kylfrysar: 1 discounts at or above 40%" in output
-    assert "Product 1: Current price 15 990 kr, historical low 15 990 kr, average price 28 081 kr" in output
+    assert "<b>PriceRunner Kylfrysar</b>: 1 discounts at or above 40% on " in output
+    assert "#id" in output
+    assert "Price drop %" in output
+    assert "15 990 kr" in output
+    assert "28 081 kr" in output
     assert saved_state[state_key]["match_state"] == "https://example.com/pl/16-123/Kylfrysar/LG-Combo-priser"
     assert saved_state[state_key]["status"] == "alerting"
 
