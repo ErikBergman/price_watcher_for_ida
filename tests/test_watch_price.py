@@ -237,11 +237,15 @@ def test_build_discount_item_message_handles_new_same_and_resolved_alerts() -> N
         "2026-04-05",
     )
 
-    assert "<b>PriceRunner Kylfrysar</b>: 1 discounts at or above 40% on 2026-04-05." in (
+    assert "<b>PriceRunner Kylfrysar</b>" in (new_message or "")
+    assert "1 discounts at or above <code>40%</code> on <code>2026-04-05</code>." in (
         new_message or ""
     )
     assert "<pre>" not in (new_message or "")
-    assert "#1: -48%, current 1 000 kr, avg 950 kr, low 900 kr" in (new_message or "")
+    assert "<b>#1</b> <code>-48%</code>" in (new_message or "")
+    assert "Current: <code>1 000 kr</code>" in (new_message or "")
+    assert "Average: <code>950 kr</code>" in (new_message or "")
+    assert "Low: <code>900 kr</code>" in (new_message or "")
     assert same_message is None
     assert resolved_message == (
         "On 2026-04-05, PriceRunner Kylfrysar no longer has discounts at or above 40%."
@@ -429,8 +433,12 @@ def test_main_discount_mode_reads_config_and_updates_state(
         "PriceRunner Kylfrysar|https://example.com/category|40"
     )
     assert exit_code == 0
-    assert "<b>PriceRunner Kylfrysar</b>: 1 discounts at or above 40% on " in output
-    assert "#1: -48%, current 15 990 kr, avg 28 081 kr, low 15 990 kr" in output
+    assert "<b>PriceRunner Kylfrysar</b>" in output
+    assert "1 discounts at or above <code>40%</code> on " in output
+    assert "<b>#1</b> <code>-48%</code>" in output
+    assert "Current: <code>15 990 kr</code>" in output
+    assert "Average: <code>28 081 kr</code>" in output
+    assert "Low: <code>15 990 kr</code>" in output
     assert saved_state[state_key]["match_state"] == "https://example.com/pl/16-123/Kylfrysar/LG-Combo-priser"
     assert saved_state[state_key]["status"] == "alerting"
 

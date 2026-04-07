@@ -700,15 +700,22 @@ def fetch_discount_price_summary(product_url: str, timeout_s: int) -> dict[str, 
 
 
 def build_discount_product_lines(rows: list[dict[str, str]]) -> list[str]:
-    return [
-        (
-            f"#{row['id']}: {row['discount_percent']}, "
-            f"current {row['current_price']}, "
-            f"avg {row['average_price']}, "
-            f"low {row['historical_low']}"
+    lines: list[str] = []
+    for index, row in enumerate(rows):
+        if index > 0:
+            lines.append("")
+        lines.extend(
+            [
+                (
+                    f"<b>#{html.escape(row['id'])}</b> "
+                    f"<code>{html.escape(row['discount_percent'])}</code>"
+                ),
+                f"Current: <code>{html.escape(row['current_price'])}</code>",
+                f"Average: <code>{html.escape(row['average_price'])}</code>",
+                f"Low: <code>{html.escape(row['historical_low'])}</code>",
+            ]
         )
-        for row in rows
-    ]
+    return lines
 
 
 def build_new_discount_product_rows(
@@ -767,16 +774,15 @@ def build_discount_item_message(
         return None
 
     lines = [
+        f"<b>{html.escape(str(watch['name']))}</b>",
         (
-            f"<b>{html.escape(str(watch['name']))}</b>: "
-            f"{len(matches)} discounts at or above {threshold}% on {today_iso}."
-        )
+            f"{len(matches)} discounts at or above "
+            f"<code>{threshold}%</code> on <code>{html.escape(today_iso)}</code>."
+        ),
     ]
     if new_product_rows:
-        lines.extend(
-            html.escape(line)
-            for line in build_discount_product_lines(new_product_rows)
-        )
+        lines.append("")
+        lines.extend(build_discount_product_lines(new_product_rows))
     return "\n".join(lines)
 
 
